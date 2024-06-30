@@ -77,6 +77,17 @@ class Display:
             logger.error("Unknown display revision '", config.CONFIG_DATA["display"]["REVISION"], "'")
 
     def initialize_display(self):
+
+        # Send initialization commands
+        self.lcd.InitializeComm()
+
+        # Turn on display, set brightness and LEDs for supported HW
+        self.turn_on()
+
+        # Set orientation
+        self.lcd.SetOrientation(_get_theme_orientation())
+
+    def reset_display(self):
         # Reset screen in case it was in an unstable state (screen is also cleared)
         self.lcd.Reset()
 

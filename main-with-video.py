@@ -28,6 +28,8 @@ import sys
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'venv', 'Lib', 'site-packages'))
 
+from library.lcd.lcd_comm_rev_c import LcdCommRevC
+
 MIN_PYTHON = (3, 8)
 if sys.version_info < MIN_PYTHON:
     print("[ERROR] Python %s.%s or later is required." % MIN_PYTHON)
@@ -186,6 +188,17 @@ if __name__ == "__main__":
 
     # Initialize the display
     display.initialize_display()
+
+    # Build your LcdComm object for Turing 5"
+    logger.info("Selected Hardware Revision C (Turing Smart Screen 5\")")
+    lcd_comm = LcdCommRevC(com_port="COM4")
+
+    # Start the backgroud video.
+    lcd_comm.StartVideo("/mnt/SDCARD/video/particle_wave.mp4")
+
+    # Initialize the video overlay.
+    # Must be called before drawing anything on the video!
+    lcd_comm.InitializeVideoOverlay()
 
     # Create all static images
     display.display_static_images()

@@ -139,3 +139,6 @@ screencap.png
 tmp
 
 external/LibreHardwareMonitor/LibreHardwareMonitorLib.sys
+
+# User config
+config.yaml

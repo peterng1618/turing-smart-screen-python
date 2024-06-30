@@ -257,7 +257,8 @@ class LcdCommRevC(LcdComm):
         logger.info("Calling ScreenOff")
         self._send_command(Command.STOP_VIDEO)
         self._send_command(Command.STOP_MEDIA, readsize=1024)
-        self._send_command(Command.TURNOFF)
+        #self._send_command(Command.TURNOFF)
+        self._send_command(Command.SET_BRIGHTNESS, payload=bytearray([0]))
 
     def ScreenOn(self):
         logger.info("Calling ScreenOn")
