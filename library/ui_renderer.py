@@ -76,19 +76,38 @@ class UiRenderer:
         return color
 
     def _create_shadow_layer(self, shape_img, shadow_config):
-        """Create a shadow layer from the shape image."""
+        """Create a shadow layer from the shape image, handling expanding blur."""
         if not shadow_config: return None
         blur = shadow_config.get('blur', 5)
         color = self._resolve_color(shadow_config.get('color', 'black'))
         offset_x = shadow_config.get('offset_x', 5)
         offset_y = shadow_config.get('offset_y', 5)
         
+        # Original mask
         mask = shape_img.split()[3]
-        shadow = Image.new('RGBA', shape_img.size, color)
-        shadow.putalpha(mask)
+        
+        # Calculate padding needed for blur to spread
+        # 3 sigma is good rule of thumb for Gaussian
+        padding = int(blur * 3) if blur > 0 else 0
+        
+        new_w = shape_img.width + padding * 2
+        new_h = shape_img.height + padding * 2
+        
+        # Create a large mask canvas
+        # 1. Place original alpha in center
+        expanded_mask = Image.new('L', (new_w, new_h), 0)
+        expanded_mask.paste(mask, (padding, padding))
+        
+        # 2. Blur the mask
         if blur > 0:
-            shadow = shadow.filter(ImageFilter.GaussianBlur(blur))
-        return shadow, offset_x, offset_y
+            expanded_mask = expanded_mask.filter(ImageFilter.GaussianBlur(blur))
+            
+        # 3. Create shadow block with this alpha
+        shadow = Image.new('RGBA', (new_w, new_h), color)
+        shadow.putalpha(expanded_mask)
+        
+        # Adjust offset because we added padding to the top-left (so we must shift "draw" position left/up)
+        return shadow, offset_x - padding, offset_y - padding
 
     def _draw_dashed_line(self, draw, p1, p2, width, color, dash_array):
         """
@@ -203,46 +222,85 @@ class UiRenderer:
                 
             return img, (offset_x, offset_y)
             
-        else: # Rect / Ellipse
-            # Note: Dash outlines for shapes are tricky. 
-            # We implemented dash line support. For Rect, we can use 4 lines if dash is requested.
-            # For Ellipse, we skip dashed outline for now.
-            
-            canvas_w = w + pad * 2
-            canvas_h = h + pad * 2
-            img = Image.new('RGBA', (int(canvas_w), int(canvas_h)), (0, 0, 0, 0))
-            d = ImageDraw.Draw(img)
-            bounds = [pad, pad, pad + w, pad + h]
-            
-            if shape_type == 'rectangle' and dash_array:
-                # Draw 4 dashed lines for outline, empty fill? Or fill + dashed outline?
-                # Fill first
-                if fill_color[3] > 0:
-                     radius = shape_config.get('radius', 0)
-                     d.rounded_rectangle(bounds, radius=radius, fill=fill_color, width=0)
-                
-                if resolved_outline:
-                     # Draw 4 lines. Logic for rounded corners with dashes is hard. 
-                     # Fallback: if dashed, ignore radius for outline or just fallback to solid if radius > 0?
-                     # Let's draw standard rectangle lines.
-                     # Top, Right, Bottom, Left
-                     pts = [
-                         ((pad, pad), (pad+w, pad)),
-                         ((pad+w, pad), (pad+w, pad+h)),
-                         ((pad+w, pad+h), (pad, pad+h)),
-                         ((pad, pad+h), (pad, pad))
-                     ]
-                     for s, e in pts:
-                         self._draw_dashed_line(d, s, e, outline_width, resolved_outline, dash_array)
+        # Supersampling factor for anti-aliasing
+        sampling = 4
+        
+        if shape_type == 'rectangle':
+            radius = shape_config.get('radius', 0) * sampling
+            # Check if using simple dashed rect logic (no radius support usually)
+            if dash_array:
+                # Dashed rectangle doesn't support radius easily in current impl
+                # Fallback to 1x for dashed to avoid complexity, or just dont supersample dashes yet
+                pass 
             else:
-                # Standard Shape Drawing
-                if shape_type == 'rectangle':
-                    radius = shape_config.get('radius', 0)
-                    d.rounded_rectangle(bounds, radius=radius, fill=fill_color, outline=resolved_outline, width=outline_width)
-                elif shape_type == 'ellipse':
-                    d.ellipse(bounds, fill=fill_color, outline=resolved_outline, width=outline_width)
+                # Supersample standard shapes
+                canvas_w = (w + pad * 2) * sampling
+                canvas_h = (h + pad * 2) * sampling
                 
-            return img, (x - pad, y - pad)
+                img = Image.new('RGBA', (int(canvas_w), int(canvas_h)), (0, 0, 0, 0))
+                d = ImageDraw.Draw(img)
+                
+                # Adjust bounds and widths
+                s_pad = pad * sampling
+                s_w = w * sampling
+                s_h = h * sampling
+                s_outline = outline_width * sampling
+                
+                bounds = [s_pad, s_pad, s_pad + s_w, s_pad + s_h]
+                
+                d.rounded_rectangle(bounds, radius=radius, fill=fill_color, outline=resolved_outline, width=s_outline)
+                
+                # Resize down
+                img = img.resize((int(canvas_w // sampling), int(canvas_h // sampling)), Image.Resampling.LANCZOS)
+                return img, (x - pad, y - pad)
+
+        elif shape_type == 'ellipse':
+             canvas_w = (w + pad * 2) * sampling
+             canvas_h = (h + pad * 2) * sampling
+             
+             img = Image.new('RGBA', (int(canvas_w), int(canvas_h)), (0, 0, 0, 0))
+             d = ImageDraw.Draw(img)
+             
+             s_pad = pad * sampling
+             s_w = w * sampling
+             s_h = h * sampling
+             s_outline = outline_width * sampling
+             
+             bounds = [s_pad, s_pad, s_pad + s_w, s_pad + s_h]
+             
+             d.ellipse(bounds, fill=fill_color, outline=resolved_outline, width=s_outline)
+             
+             img = img.resize((int(canvas_w // sampling), int(canvas_h // sampling)), Image.Resampling.LANCZOS)
+             return img, (x - pad, y - pad)
+
+        # Fallback for complex dashed rects if any, or just legacy path if we skipped above
+        # Note: 'line' is handled in previous block, so this `else` was only for rect/ellipse.
+        # But we replaced the `else` with specific `if/elif`.
+        # If we are here, it might be a dashed rectangle which we skipped above?
+        
+        # Original logic for non-supersampled (dashed rects)
+        canvas_w = w + pad * 2
+        canvas_h = h + pad * 2
+        img = Image.new('RGBA', (int(canvas_w), int(canvas_h)), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        bounds = [pad, pad, pad + w, pad + h]
+        
+        if shape_type == 'rectangle' and dash_array:
+            if fill_color[3] > 0:
+                 radius = shape_config.get('radius', 0)
+                 d.rounded_rectangle(bounds, radius=radius, fill=fill_color, width=0)
+            
+            if resolved_outline:
+                 pts = [
+                     ((pad, pad), (pad+w, pad)),
+                     ((pad+w, pad), (pad+w, pad+h)),
+                     ((pad+w, pad+h), (pad, pad+h)),
+                     ((pad, pad+h), (pad, pad))
+                 ]
+                 for s, e in pts:
+                     self._draw_dashed_line(d, s, e, outline_width, resolved_outline, dash_array)
+
+        return img, (x - pad, y - pad)
 
     def draw_text_to_image(self, text_config):
         """Render text to an RGBA image."""
