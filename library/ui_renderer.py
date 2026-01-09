@@ -109,10 +109,69 @@ class UiRenderer:
         # Adjust offset because we added padding to the top-left (so we must shift "draw" position left/up)
         return shadow, offset_x - padding, offset_y - padding
 
-    def _draw_dashed_line(self, draw, p1, p2, width, color, dash_array):
+    def _apply_image_outline(self, img, outline_config):
+        """
+        Apply an outline (stroke) to an image by dilating its alpha channel.
+        Returns a new image (larger by 2*width) with the outline composited behind.
+        """
+        if not outline_config: return img, 0, 0
+        
+        width = outline_config.get('width', 0)
+        if width <= 0: return img, 0, 0
+        
+        color = self._resolve_color(outline_config.get('color', 'white'))
+        
+        # Dilation kernel size. 
+        # width=1 -> 1px expansion on all sides? 
+        # MaxFilter w/ size=3 (radius 1) examines 1 pixel around.
+        # size = w*2 + 1
+        filter_size = width * 2 + 1
+        
+        # Expand canvas to fit outline
+        # We need padding = width
+        padding = width
+        new_w = img.width + padding * 2
+        new_h = img.height + padding * 2
+        
+        # Create padded mask
+        mask = img.split()[3]
+        expanded_mask = Image.new('L', (new_w, new_h), 0)
+        expanded_mask.paste(mask, (padding, padding))
+        
+        # Dilate (Grow) the mask
+        # MaxFilter is square. For small widths this is fine.
+        # For rounded dilation, we might chain filters or use a different approach, 
+        # but MaxFilter is standard for simple "Stroke" effects in PIL.
+        outline_mask = expanded_mask.filter(ImageFilter.MaxFilter(filter_size))
+        
+        # Create outline layer
+        outline_layer = Image.new('RGBA', (new_w, new_h), color)
+        outline_layer.putalpha(outline_mask)
+        
+        # Paste original image on top
+        # We assume original image is "foreground"
+        # Since we just want the outline sticking out, we composite:
+        # Result = Outline over Empty, then Original over Result.
+        
+        # Just paste original? Alpha composite is safer for semi-transparent pixels in original.
+        # Create a temp image for original placed in center
+        fg = Image.new('RGBA', (new_w, new_h), (0,0,0,0))
+        fg.paste(img, (padding, padding))
+        
+        # Composite: Outline is background, FG is foreground
+        # But wait, outline_layer is full block. We only want outline visible where FG is transparent?
+        # Standard stroke usually is drawn *behind* the object. So opacity in the object reveals the stroke?
+        # Usually yes. If object is semi-transparent, stroke shows through.
+        
+        final_img = Image.alpha_composite(outline_layer, fg)
+        
+        return final_img, padding, padding
+
+    def _draw_dashed_line(self, draw, p1, p2, width, color, dash_array, cap='butt'):
         """
         Draw a dashed line between p1 and p2.
         dash_array: [draw_pixels, gap_pixels]
+        cap: 'butt' (default) or 'round'
         """
         x1, y1 = p1
         x2, y2 = p2
@@ -130,6 +189,11 @@ class UiRenderer:
             # Determine segment end
             seg_len = min(dash_len, total_dist - current_dist)
             
+            # If segment is very short (end of line), strictly clip it? 
+            # Or just draw what fits.
+            # Fix: Allow 0-length segments if dash_len is 0 (for dots with caps)
+            if seg_len <= 0 and dash_len > 0: break
+            
             start_x = x1 + vx * current_dist
             start_y = y1 + vy * current_dist
             end_x = x1 + vx * (current_dist + seg_len)
@@ -137,14 +201,21 @@ class UiRenderer:
             
             draw.line([(start_x, start_y), (end_x, end_y)], fill=color, width=width)
             
+            if cap == 'round':
+                # Draw rounded caps for this segment
+                # Since PIL draw.line is usually flat cap (butt), we add circles at endpoints.
+                r = width / 2
+                # Start cap
+                draw.ellipse([start_x - r, start_y - r, start_x + r, start_y + r], fill=color)
+                # End cap
+                draw.ellipse([end_x - r, end_y - r, end_x + r, end_y + r], fill=color)
+            
             current_dist += dash_len + gap_len
 
     def draw_shape_to_image(self, shape_config):
         shape_type = shape_config.get('type')
         if not shape_type: return None, (0,0)
 
-        # Normalize x,y to be top-left start, but wait, if we rotate, x,y matters.
-        # We process local drawing first.
         x = shape_config.get('x', 0)
         y = shape_config.get('y', 0)
         w = shape_config.get('width', 0)
@@ -159,17 +230,32 @@ class UiRenderer:
             else: w = h = max(w, h)
         
         fill_color = self._resolve_color(shape_config.get('color', (255, 255, 255)), shape_config.get('alpha'))
-        outline_color_raw = shape_config.get('outline_color')
-        outline_width = shape_config.get('outline_width', 0)
+        
+        # --- Parse Outline Config ---
+        outline_cfg = shape_config.get('outline', {})
+        if not outline_cfg:
+            # Fallback to legacy keys
+            if 'outline_color' in shape_config:
+                outline_cfg = {
+                    'color': shape_config.get('outline_color'),
+                    'width': shape_config.get('outline_width', 0),
+                    'dash_array': shape_config.get('dash_array'),
+                    'style': shape_config.get('style'),
+                    'cap': shape_config.get('end_cap', 'butt') # Inherit main cap for legacy lines
+                }
+        
+        outline_color_raw = outline_cfg.get('color')
+        outline_width = outline_cfg.get('width', 0)
         resolved_outline = self._resolve_color(outline_color_raw) if outline_color_raw else None
         
         # Dash support
-        dash_array = shape_config.get('dash_array') # e.g. [5, 5]
-        # Or 'style': 'dotted' -> [1, width], 'dashed' -> [width*3, width]
+        dash_array = outline_cfg.get('dash_array') 
         if not dash_array:
-            style = shape_config.get('style')
-            if style == 'dotted': dash_array = [2, 2] # simplified
+            style = outline_cfg.get('style')
+            if style == 'dotted': dash_array = [2, 2] 
             elif style == 'dashed': dash_array = [10, 5]
+            
+        outline_cap = outline_cfg.get('cap', 'butt')
         
         pad = math.ceil(outline_width / 2) + 1
         
@@ -191,68 +277,90 @@ class UiRenderer:
             p1 = (x - offset_x, y - offset_y)
             p2 = (x2 - offset_x, y2 - offset_y)
             
-            joint = shape_config.get('end_cap', 'butt')
+            # Line can have its own end_cap property (legacy) or outline.cap (new)
+            # Prioritize 'end_cap' for the MAIN line if explicit, else outline config?
+            # Actually line usually has "end_cap".
+            joint = shape_config.get('end_cap', outline_cap)
 
             # Helper to draw line (solid or dashed)
-            def draw_the_line(dr, pt1, pt2, wd, col, dashes):
+            def draw_the_line(dr, pt1, pt2, wd, col, dashes, cap_style):
                 if dashes:
-                    self._draw_dashed_line(dr, pt1, pt2, wd, col, dashes)
+                    self._draw_dashed_line(dr, pt1, pt2, wd, col, dashes, cap_style)
                 else:
                     dr.line([pt1, pt2], fill=col, width=wd)
-                    # Caps only apply to solid lines in native PIL, 
-                    # but if we are manual, we skip caps for dashes for now to keep it simple, 
-                    # OR we implement caps for dash segments (too complex for now).
-                    # Just solid caps at ends of the main line if requested?
-                    pass
+                    if cap_style == 'round':
+                        r = wd / 2
+                        dr.ellipse([pt1[0]-r, pt1[1]-r, pt1[0]+r, pt1[1]+r], fill=col)
+                        dr.ellipse([pt2[0]-r, pt2[1]-r, pt2[0]+r, pt2[1]+r], fill=col)
             
             # Draw Outline
             if resolved_outline:
-                draw_the_line(d, p1, p2, w + (outline_width*2), resolved_outline, dash_array)
-                if joint == 'round' and not dash_array:
-                     r = (w + outline_width*2) / 2
-                     d.ellipse([p1[0]-r, p1[1]-r, p1[0]+r, p1[1]+r], fill=resolved_outline)
-                     d.ellipse([p2[0]-r, p2[1]-r, p2[0]+r, p2[1]+r], fill=resolved_outline)
+                # Outline width adds to main width
+                draw_the_line(d, p1, p2, w + (outline_width*2), resolved_outline, dash_array, outline_cap)
 
             # Draw Main
-            draw_the_line(d, p1, p2, w, fill_color, dash_array)
-            if joint == 'round' and not dash_array:
-                r = w / 2
-                d.ellipse([p1[0]-r, p1[1]-r, p1[0]+r, p1[1]+r], fill=fill_color)
-                d.ellipse([p2[0]-r, p2[1]-r, p2[0]+r, p2[1]+r], fill=fill_color)
+            draw_the_line(d, p1, p2, w, fill_color, dash_array, joint)
                 
             return img, (offset_x, offset_y)
             
-        # Supersampling factor for anti-aliasing
+        # Supersampling factor for anti-aliasing (Rect/Ellipse)
         sampling = 4
         
         if shape_type == 'rectangle':
             radius = shape_config.get('radius', 0) * sampling
-            # Check if using simple dashed rect logic (no radius support usually)
+            
+            # Supersample standard shapes & Dashed shapes manually
+            canvas_w = (w + pad * 2) * sampling
+            canvas_h = (h + pad * 2) * sampling
+            
+            img = Image.new('RGBA', (int(canvas_w), int(canvas_h)), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            
+            s_pad = pad * sampling
+            s_w = w * sampling
+            s_h = h * sampling
+            s_outline = outline_width * sampling
+            
+            bounds = [s_pad, s_pad, s_pad + s_w, s_pad + s_h]
+
             if dash_array:
-                # Dashed rectangle doesn't support radius easily in current impl
-                # Fallback to 1x for dashed to avoid complexity, or just dont supersample dashes yet
-                pass 
+                # Manual dashed drawing on high-res canvas
+                # We need to scale dash array
+                s_dash_array = [v * sampling for v in dash_array]
+                
+                # Fill first
+                if fill_color[3] > 0:
+                     d.rounded_rectangle(bounds, radius=radius, fill=fill_color, width=0)
+                
+                if resolved_outline:
+                     # Draw 4 dashed lines. Logic for rounded corners with dashes is still complex.
+                     # But for now, user is accepting "rectangle" dashes. 
+                     # Using simple lines for the rectangle outline on high res canvas.
+                     # NOTE: This ignores Radius for the OUTLINE if it is dashed. 
+                     # This is a known limitation unless we implement path walking.
+                     # However, the user's screenshot showed rounded corners for dashes?
+                     # No, the screenshot showed dashes following the rect? 
+                     # Actually, standard PIL/my logic draws 4 lines.
+                     # If the user wants rounded dashed corners, that's much harder.
+                     # But at least let's fix the SIZE of the dashes.
+                     
+                     # Simple 4 lines approach for high-res
+                     pts = [
+                         ((s_pad, s_pad), (s_pad+s_w, s_pad)),
+                         ((s_pad+s_w, s_pad), (s_pad+s_w, s_pad+s_h)),
+                         ((s_pad+s_w, s_pad+s_h), (s_pad, s_pad+s_h)),
+                         ((s_pad, s_pad+s_h), (s_pad, s_pad))
+                     ]
+
+                     for s, e in pts:
+                         self._draw_dashed_line(d, s, e, s_outline, resolved_outline, s_dash_array, outline_cap)
+
             else:
-                # Supersample standard shapes
-                canvas_w = (w + pad * 2) * sampling
-                canvas_h = (h + pad * 2) * sampling
-                
-                img = Image.new('RGBA', (int(canvas_w), int(canvas_h)), (0, 0, 0, 0))
-                d = ImageDraw.Draw(img)
-                
-                # Adjust bounds and widths
-                s_pad = pad * sampling
-                s_w = w * sampling
-                s_h = h * sampling
-                s_outline = outline_width * sampling
-                
-                bounds = [s_pad, s_pad, s_pad + s_w, s_pad + s_h]
-                
-                d.rounded_rectangle(bounds, radius=radius, fill=fill_color, outline=resolved_outline, width=s_outline)
-                
-                # Resize down
-                img = img.resize((int(canvas_w // sampling), int(canvas_h // sampling)), Image.Resampling.LANCZOS)
-                return img, (x - pad, y - pad)
+                 d.rounded_rectangle(bounds, radius=radius, fill=fill_color, outline=resolved_outline, width=s_outline)
+            
+            # Resize down
+            img = img.resize((int(canvas_w // sampling), int(canvas_h // sampling)), Image.Resampling.LANCZOS)
+            return img, (x - pad, y - pad)
 
         elif shape_type == 'ellipse':
              canvas_w = (w + pad * 2) * sampling
@@ -273,12 +381,7 @@ class UiRenderer:
              img = img.resize((int(canvas_w // sampling), int(canvas_h // sampling)), Image.Resampling.LANCZOS)
              return img, (x - pad, y - pad)
 
-        # Fallback for complex dashed rects if any, or just legacy path if we skipped above
-        # Note: 'line' is handled in previous block, so this `else` was only for rect/ellipse.
-        # But we replaced the `else` with specific `if/elif`.
-        # If we are here, it might be a dashed rectangle which we skipped above?
-        
-        # Original logic for non-supersampled (dashed rects)
+        # Fallback for complex dashed rects
         canvas_w = w + pad * 2
         canvas_h = h + pad * 2
         img = Image.new('RGBA', (int(canvas_w), int(canvas_h)), (0, 0, 0, 0))
@@ -298,7 +401,7 @@ class UiRenderer:
                      ((pad, pad+h), (pad, pad))
                  ]
                  for s, e in pts:
-                     self._draw_dashed_line(d, s, e, outline_width, resolved_outline, dash_array)
+                     self._draw_dashed_line(d, s, e, outline_width, resolved_outline, dash_array, outline_cap)
 
         return img, (x - pad, y - pad)
 
@@ -456,9 +559,36 @@ class UiRenderer:
                                 new_w = int(ui_img.width * scale)
                                 new_h = int(ui_img.height * scale)
                                 ui_img = ui_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                            
+                            # Apply Outline (Stroke)
+                            outline_cfg = config_item.get('outline', {})
+                            # Support top-level outline keys for consistency? Users might guess 'outline_color'. 
+                            # But better to stick to 'outline' dict from now on.
+                            if not outline_cfg and 'outline_color' in config_item:
+                                 outline_cfg = {
+                                     'color': config_item.get('outline_color'),
+                                     'width': config_item.get('outline_width', 0)
+                                 }
+                            
+                            if outline_cfg:
+                                ui_img, px, py = self._apply_image_outline(ui_img, outline_cfg)
+                                # Adjust draw position to account for padding added by outline
+                                # x, y passed to process_element are the top-left.
+                                # The image grew by px, py (top/left padding).
+                                # So effective origin shifts by -px, -py?
+                                # Wait. If I want the image at (100, 100).
+                                # original image was at (100, 100).
+                                # new image has 5px padding. center of new = center of old.
+                                # top-left of new is at 95, 95.
+                                # So we must subtract padding from x, y.
+                                x_shift = px
+                                y_shift = py
+                            else:
+                                x_shift = 0
+                                y_shift = 0
                                 
-                            x = config_item.get('x', 0)
-                            y = config_item.get('y', 0)
+                            x = config_item.get('x', 0) - x_shift
+                            y = config_item.get('y', 0) - y_shift
                             process_element(ui_img, x, y, config_item)
                         except Exception as e:
                             logger.error(f"Error drawing image {path}: {e}")

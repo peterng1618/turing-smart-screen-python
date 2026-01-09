@@ -268,17 +268,25 @@ shadow:
 #### 1. Rectangle
 Draws a rectangle, optionally with rounded corners.
 
-| Property        | Type    | Description                             |
-| :-------------- | :------ | :-------------------------------------- |
-| `type`          | String  | Must be `rectangle`                     |
-| `width`         | Integer | Width of the rectangle                  |
-| `height`        | Integer | Height of the rectangle                 |
-| `color`         | String  | Fill color (RGBA: "r,g,b,a")            |
-| `radius`        | Integer | Corner radius for rounded corners       |
-| `outline_color` | String  | Outline color (RGBA)                    |
-| `outline_width` | Integer | Thickness of the outline                |
-| `dash_array`    | List    | Custom dash pattern `[draw_px, gap_px]` |
-| `style`         | String  | Preset dash style: `dotted` or `dashed` |
+| Property  | Type    | Description                       |
+| :-------- | :------ | :-------------------------------- |
+| `type`    | String  | Must be `rectangle`               |
+| `width`   | Integer | Width of the rectangle            |
+| `height`  | Integer | Height of the rectangle           |
+| `color`   | String  | Fill color (RGBA: "r,g,b,a")      |
+| `radius`  | Integer | Corner radius for rounded corners |
+| `outline` | Object  | Outline configuration (see below) |
+
+**Outline Configuration:**
+```yaml
+outline:
+  width: 2             # Thickness
+  color: "255, 255, 255"
+  dash_array: [10, 5]  # Optional: [draw, gap]
+  cap: round           # Optional: 'butt' (default) or 'round'
+```
+> [!NOTE]
+> When using `dash_array` with a rounded rectangle, the outline will effectively be drawn as a square (sharp corners) due to current rendering limitations. Solid outlines respect the corner radius.
 
 **Example:**
 ```yaml
@@ -289,10 +297,11 @@ Draws a rectangle, optionally with rounded corners.
     height: 100
     color: "255, 0, 0, 128"
     radius: 15
-    outline_color: "255, 255, 255, 255"
-    outline_width: 2
-    dash_array: [10, 5]  # Alternative to style
-    # style: dashed  # Use either dash_array OR style, not both
+    outline:
+      width: 4
+      color: "255, 255, 255, 255"
+      dash_array: [5, 10]
+      cap: round
     angle: 15
     opacity: 0.9
     shadow:
@@ -305,15 +314,14 @@ Draws a rectangle, optionally with rounded corners.
 #### 2. Circle / Ellipse
 Draws a circle or ellipse.
 
-| Property        | Type    | Description                                   |
-| :-------------- | :------ | :-------------------------------------------- |
-| `type`          | String  | `circle` or `ellipse`                         |
-| `width`         | Integer | Width (Ellipse only)                          |
-| `height`        | Integer | Height (Ellipse only)                         |
-| `radius`        | Integer | Radius (Circle only). Overrides width/height. |
-| `color`         | String  | Fill color (RGBA)                             |
-| `outline_color` | String  | Outline color (RGBA)                          |
-| `outline_width` | Integer | Thickness of the outline                      |
+| Property  | Type    | Description                                   |
+| :-------- | :------ | :-------------------------------------------- |
+| `type`    | String  | `circle` or `ellipse`                         |
+| `width`   | Integer | Width (Ellipse only)                          |
+| `height`  | Integer | Height (Ellipse only)                         |
+| `radius`  | Integer | Radius (Circle only). Overrides width/height. |
+| `color`   | String  | Fill color (RGBA)                             |
+| `outline` | Object  | Outline configuration                         |
 
 **Example:**
 ```yaml
@@ -322,9 +330,10 @@ Draws a circle or ellipse.
     y: 100
     radius: 50
     color: "0, 0, 255, 200"
-    outline_color: "255, 255, 255, 255"
-    outline_width: 3
-    angle: 0  # Rotation (not visually apparent for perfect circles)
+    outline:
+      width: 3
+      color: "255, 255, 255, 255"
+    angle: 0
     opacity: 0.8
     shadow:
       blur: 10
@@ -336,17 +345,15 @@ Draws a circle or ellipse.
 #### 3. Line
 Draws a line between two points.
 
-| Property        | Type    | Description                              |
-| :-------------- | :------ | :--------------------------------------- |
-| `type`          | String  | Must be `line`                           |
-| `x2`            | Integer | End X coordinate                         |
-| `y2`            | Integer | End Y coordinate                         |
-| `width`         | Integer | Line thickness                           |
-| `color`         | String  | Line color (RGBA)                        |
-| `end_cap`       | String  | Line ending: `butt` (default) or `round` |
-| `outline_color` | String  | Outline color around the line            |
-| `outline_width` | Integer | Thickness of the outline                 |
-| `style`         | String  | `dotted` or `dashed`                     |
+| Property  | Type    | Description                              |
+| :-------- | :------ | :--------------------------------------- |
+| `type`    | String  | Must be `line`                           |
+| `x2`      | Integer | End X coordinate                         |
+| `y2`      | Integer | End Y coordinate                         |
+| `width`   | Integer | Line thickness                           |
+| `color`   | String  | Line color (RGBA)                        |
+| `end_cap` | String  | Line ending: `butt` (default) or `round` |
+| `outline` | Object  | Outline configuration                    |
 
 **Example:**
 ```yaml
@@ -358,10 +365,11 @@ Draws a line between two points.
     width: 5
     color: "0, 255, 0, 255"
     end_cap: round
-    outline_color: "0, 0, 0, 255"
-    outline_width: 1
-    style: dashed
-    angle: 0  # Rotation applied from (x, y)
+    outline:
+      width: 1
+      color: "0, 0, 0, 255"
+      style: dashed
+    angle: 0
     opacity: 1.0
     shadow:
       blur: 3
@@ -399,30 +407,37 @@ Draws text using a TrueType font.
       offset_y: 2
 ```
 
-#### 5. Image
-Draws a PNG image.
+#### 6. Image
+Draws an image from a file.
 
-| Property  | Type   | Description                          |
-| :-------- | :----- | :----------------------------------- |
-| `type`    | String | Must be `image`                      |
-| `path`    | String | Image file path (relative to theme)  |
-| `scale`   | Float  | Scaling factor (1.0 = original size) |
-| `opacity` | Float  | Opacity multiplier (0.0 to 1.0)      |
+| Property  | Type    | Description                      |
+| :-------- | :------ | :------------------------------- |
+| `type`    | String  | Must be `image`                  |
+| `path`    | String  | Relative path to image file      |
+| `x`       | Integer | X coordinate                     |
+| `y`       | Integer | Y coordinate                     |
+| `scale`   | Float   | Scale factor (default 1.0)       |
+| `opacity` | Float   | Opacity 0.0 to 1.0 (default 1.0) |
+| `angle`   | Float   | Rotation angle in degrees        |
+| `outline` | Object  | Outline (stroke) configuration   |
 
 **Example:**
 ```yaml
   - type: image
-    path: "icons/warning.png"
-    x: 300
-    y: 10
+    path: "icons/gpu_icon.png"
+    x: 50
+    y: 50
     scale: 0.5
-    opacity: 0.8
-    angle: 45
+    opacity: 0.9
+    angle: 0
+    outline:
+      width: 2
+      color: "255, 255, 255, 255"
     shadow:
-      blur: 6
-      color: "0, 0, 0, 120"
-      offset_x: 4
-      offset_y: 4
+      blur: 5
+      color: "0, 0, 0, 100"
+      offset_x: 3
+      offset_y: 3
 ```
 
 ### Video Processor Tool
