@@ -91,7 +91,75 @@ def refresh_theme():
     # Initialize the display
     display.initialize_display()
 
-    # Create all static images
+    # Check if video background is enabled
+    video_config = config.THEME_DATA.get('video_background', {})
+    if video_config.get('ENABLE', False):
+        # Extract frame #10 from video for preview
+        local_path = video_config.get('LOCAL_PATH')
+        if local_path:
+            try:
+                import cv2
+                from PIL import Image
+                
+                # Resolve video path
+                if not os.path.isabs(local_path):
+                    video_path = str(config.MAIN_DIRECTORY / local_path)
+                else:
+                    video_path = local_path
+                
+                if os.path.exists(video_path):
+                    # Open video
+                    video = cv2.VideoCapture(video_path)
+                    if video.isOpened():
+                        # Seek to frame 10 (to avoid black intro frames)
+                        video.set(cv2.CAP_PROP_POS_FRAMES, 10)
+                        ret, frame = video.read()
+                        video.release()
+                        
+                        if ret:
+                            # Convert BGR to RGB
+                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            video_image = Image.fromarray(frame_rgb)
+                            
+                            # Resize to display dimensions if needed
+                            if video_image.size != (display.lcd.get_width(), display.lcd.get_height()):
+                                video_image = video_image.resize((display.lcd.get_width(), display.lcd.get_height()), Image.Resampling.LANCZOS)
+                            
+                            # Save as background.png in theme folder for BACKGROUND_IMAGE references
+                            background_path = config.THEME_DATA['PATH'] + "background.png"
+                            
+                            # Delete old file to force complete cache invalidation
+                            if os.path.exists(background_path):
+                                os.remove(background_path)
+                                logger.debug(f"Deleted old {background_path}")
+                            
+                            # Save new video frame
+                            video_image.save(background_path)
+                            
+                            logger.info(f"Saved video frame #10 as {background_path} (will clear cache before rendering)")
+                            
+                            # Display video frame as background
+                            display.lcd.DisplayPILImage(video_image, 0, 0)
+                            logger.info(f"Video background preview: showing frame #10 from {os.path.basename(video_path)}")
+            except ImportError:
+                logger.warning("opencv-python not installed - cannot preview video background. Install with: pip install opencv-python")
+            except Exception as e:
+                logger.error(f"Error loading video background preview: {e}")
+    
+    # Clear display module's image cache before rendering to ensure fresh load of background.png
+    # The display module caches images in self.image_cache to avoid repeated file I/O
+    if hasattr(display.lcd, 'image_cache'):
+        display.lcd.image_cache.clear()
+        logger.debug(f"Cleared display.lcd.image_cache ({len(display.lcd.image_cache)} items before clear)")
+    
+    # Also clear PIL's cache as a safety measure
+    import gc
+    if hasattr(Image, '_image_cache'):
+        Image._image_cache.clear()
+    gc.collect()
+    logger.debug("Cleared all image caches before rendering")
+    
+    # Create all static images (if no video, BACKGROUND will be rendered; if video, other images)
     display.display_static_images()
 
     # Create all static texts

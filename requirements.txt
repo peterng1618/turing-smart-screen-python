@@ -21,6 +21,10 @@ numpy~=2.0.2; python_version < "3.10"   # For Python 3.9, only numpy 2.0.x is su
 numpy~=2.2.6; python_version == "3.10"  # For Python 3.10, only numpy 2.2.x is supported
 numpy~=2.3.4; python_version > "3.10"   # For Python > 3.10, any numpy 2.x is fine
 
+# Video overlay optimization (for Revision C displays)
+# Numba 0.63+ supports numpy 2.3
+numba~=0.63.0
+
 # For Nvidia GPU on all platforms
 GPUtil~=1.4.0; python_version < "3.12"
 # GPUtil is broken for Python 3.12+ and not maintained anymore: fetch it from a fork where it is fixed

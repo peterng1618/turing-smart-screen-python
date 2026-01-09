@@ -19,6 +19,27 @@ display:
   # Backplate RGB LED color (for HW revision 'flagship' devices only), set one that match your theme dominant color
   DISPLAY_RGB_LED: 255, 0, 0
 
+video_background:
+  # VIDEO BACKGROUNDS (Revision C / 5" displays only)
+  # Video backgrounds are FULLSCREEN and fill the entire display - no X/Y positioning needed.
+  # All UI elements (text, stats, graphs) render as transparent overlays on top of the video.
+  # Video backgrounds and static BACKGROUND image are mutually exclusive.
+  # To enable: set ENABLE to True and comment out the BACKGROUND entry in static_images section.
+  # Video must be in MP4 format, with resolution matching your display (e.g., 480x800 for portrait, 800x480 for landscape).
+  
+  # Set to True to enable video background, False to use static image
+  ENABLE: False
+  
+  # Path to video on display's storage (required if ENABLE is True)
+  # System automatically tries SD card first (/mnt/SDCARD/video/), then internal storage (/root/video/) as fallback
+  # You can specify either location - the system will find or upload to the best available location
+  # Examples: "/mnt/SDCARD/video/myvideo.mp4" (SD card) or "/root/video/myvideo.mp4" (internal)
+  REMOTE_PATH: /mnt/SDCARD/video/gunpla.mp4
+  
+  # Optional: Local path to video file for automatic upload if not present on display
+  # Path is relative to theme directory, or can be absolute
+  LOCAL_PATH: res/videos/gunpla.mp4
+
 static_images:
   # Specify what static images we want to show on the display
   # You can create additional records here, the name of the entry must be unique and contain at a minimum the PATH.

@@ -18,6 +18,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import os
+
+from PIL import Image
+
 from library import config
 from library.lcd.lcd_comm import Orientation
 from library.lcd.lcd_comm_rev_a import LcdCommRevA
@@ -134,9 +138,191 @@ class Display:
         # Turn off backplate RGB LED
         self.lcd.SetBackplateLedColor(led_color=(0, 0, 0))
 
+    def display_video_background(self):
+        """Start video background playback if enabled in theme (Revision C / 5\" displays only)."""
+        if not config.THEME_DATA.get('video_background', {}).get('ENABLE', False):
+            return False  # Video background not enabled
+        
+        # Check if this is a simulated display (for theme editor preview)
+        from library.lcd.lcd_simulated import LcdSimulated
+        from library.lcd.lcd_comm_rev_c import LcdCommRevC
+        
+        is_simulated = isinstance(self.lcd, LcdSimulated)
+        is_rev_c = isinstance(self.lcd, LcdCommRevC)
+        
+        if not is_simulated and not is_rev_c:
+            logger.warning("Video backgrounds are only supported on Revision C (5\") displays. Falling back to static image background.")
+            return False
+        
+        # For simulated displays, use local video file for preview
+        if is_simulated:
+            local_path = config.THEME_DATA['video_background'].get('LOCAL_PATH')
+            if not local_path:
+                logger.error("VIDEO BACKGROUND: LOCAL_PATH not specified for simulated preview")
+                return False
+            
+            
+            try:
+                # Get full path to local video
+                # LOCAL_PATH is relative to project root, not theme directory
+                if os.path.isabs(local_path):
+                    full_local_path = local_path
+                else:
+                    # Combine with project root directory
+                    full_local_path = str(config.MAIN_DIRECTORY / local_path)
+                
+                print(f"DEBUG: Resolved video path: {full_local_path}")  # Debug print
+                
+                if not os.path.exists(full_local_path):
+                    logger.error(f"Video file not found: {full_local_path}")
+                    return False
+                
+                # For theme editor preview, open video for continuous playback
+                try:
+                    import cv2
+                    logger.info(f"Loading video for preview: {full_local_path}")
+                    print(f"DEBUG: Loading video from: {full_local_path}")  # Debug print
+                    
+                    # Open video file and store in display object for continuous playback
+                    video = cv2.VideoCapture(full_local_path)
+                    if not video.isOpened():
+                        logger.error(f"Could not open video file: {full_local_path}")
+                        print(f"DEBUG: Failed to open video!")  # Debug print
+                        return False
+                    
+                    # Get video properties
+                    fps = video.get(cv2.CAP_PROP_FPS)
+                    frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+                    
+                    # Read first frame for initial display
+                    ret, frame = video.read()
+                    
+                    if not ret:
+                        logger.error("Could not read frame from video")
+                        print(f"DEBUG: Could not read frame!")  # Debug print
+                        video.release()
+                        return False
+                    
+                    print(f"DEBUG: Video loaded - {frame_count} frames at {fps} FPS, shape: {frame.shape}")  # Debug print
+                    
+                    # Convert BGR (OpenCV) to RGB (PIL)
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    video_image = Image.fromarray(frame_rgb)
+                    
+                    # Resize to display dimensions if needed
+                    if video_image.size != (self.lcd.get_width(), self.lcd.get_height()):
+                        video_image = video_image.resize((self.lcd.get_width(), self.lcd.get_height()), Image.Resampling.LANCZOS)
+                    
+                    print(f"DEBUG: About to display video image at 0,0 size={video_image.size}")  # Debug print
+                    
+                    # Display first frame as background
+                    self.lcd.DisplayPILImage(video_image, 0, 0)
+                    
+                    # Store video capture object for continuous playback
+                    self.lcd.video_capture = video
+                    self.lcd.video_fps = fps
+                    self.lcd.video_frame_index = 1  # We already read frame 0
+                    self.lcd.video_frame_count = frame_count
+                    self.lcd.video_playing = True
+                    
+                    logger.info(f"Video background preview loaded - {frame_count} frames at {fps:.1f} FPS")
+                    print(f"DEBUG: Video background loaded successfully!")  # Debug print
+                    return True
+                    
+                except ImportError:
+                    logger.warning("opencv-python (cv2) not installed - cannot preview video. Install with: pip install opencv-python")
+                    logger.warning("Falling back to static background")
+                    return False
+                except Exception as e:
+                    logger.error(f"Error loading video for preview: {e}")
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"Error in simulated video background: {e}")
+                return False
+        
+        # For real Revision C displays, use normal video playback
+        remote_path = config.THEME_DATA['video_background'].get('REMOTE_PATH')
+        if not remote_path:
+            logger.error("VIDEO BACKGROUND: REMOTE_PATH not specified in theme")
+            return False
+        
+        # Check if video exists on display, upload if needed
+        try:
+            # Extract filename from remote path
+            filename = os.path.basename(remote_path)
+            
+            # Define preferred storage locations (SD card first, then internal)
+            storage_locations = [
+                f"/mnt/SDCARD/video/{filename}",  # SD card (preferred)
+                f"/root/video/{filename}"          # Internal storage (fallback)
+            ]
+            
+            # Try to find video in preferred locations
+            found_path = None
+            for path in storage_locations:
+                video_size = self.lcd.GetFileSize(path)
+                if video_size > 0:
+                    found_path = path
+                    logger.debug(f"Found existing video at {path} ({video_size} bytes)")
+                    break
+            
+            # If video not found anywhere, upload to SD card (or user-specified location)
+            if not found_path:
+                local_path = config.THEME_DATA['video_background'].get('LOCAL_PATH')
+                if not local_path:
+                    logger.error(f"Video {filename} not found on display and no LOCAL_PATH provided")
+                    return False
+                
+                # Upload to SD card by default (preferred), unless user explicitly specified /root/
+                upload_path = storage_locations[0]  # Default: SD card
+                if remote_path.startswith("/root/"):
+                    upload_path = storage_locations[1]  # User wants internal storage
+                
+                # Upload from local path
+                full_local_path = config.THEME_DATA['PATH'] + local_path if not os.path.isabs(local_path) else local_path
+                logger.info(f"Uploading video from {full_local_path} to {upload_path}...")
+                
+                try:
+                    self.lcd.UploadFile(full_local_path, upload_path)
+                    logger.info(f"Video upload complete to {upload_path}")
+                    found_path = upload_path
+                except Exception as upload_error:
+                    # If SD card upload fails, try internal storage as fallback
+                    if upload_path == storage_locations[0]:
+                        logger.warning(f"SD card upload failed ({upload_error}), trying internal storage...")
+                        upload_path = storage_locations[1]
+                        self.lcd.UploadFile(full_local_path, upload_path)
+                        logger.info(f"Video uploaded to internal storage: {upload_path}")
+                        found_path = upload_path
+                    else:
+                        raise  # Re-raise if internal storage also failed
+            
+            # Start video playback
+            logger.info(f"Starting video background: {found_path}")
+            self.lcd.StartVideo(found_path)
+            
+            # Initialize video overlay for UI elements
+            logger.debug("Initializing video overlay system")
+            self.lcd.InitializeVideoOverlay()
+            
+            return True  # Video background started successfully
+            
+        except Exception as e:
+            logger.error(f"Error starting video background: {e}")
+            return False
+
     def display_static_images(self):
+        # Check if video background is enabled and skip static BACKGROUND if so
+        video_enabled = config.THEME_DATA.get('video_background', {}).get('ENABLE', False)
+        
         if config.THEME_DATA.get('static_images', False):
             for image in config.THEME_DATA['static_images']:
+                # Skip BACKGROUND image if video background is enabled
+                if video_enabled and image == 'BACKGROUND':
+                    logger.debug("Skipping static BACKGROUND image (video background enabled)")
+                    continue
+                    
                 logger.debug(f"Drawing Image: {image}")
                 self.lcd.DisplayBitmap(
                     bitmap_path=config.THEME_DATA['PATH'] + config.THEME_DATA['static_images'][image].get("PATH"),
