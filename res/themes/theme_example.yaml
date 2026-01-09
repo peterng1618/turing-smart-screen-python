@@ -87,8 +87,80 @@ static_text:
    BACKGROUND_IMAGE: background.png
    ALIGN: left  # left / center / right
    ANCHOR: lt   # Check https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html
+   
+ui_elements:
+  # This section defines custom UI elements to draw (Shapes, UI Text, Static Images).
+  # These are rendered as a transparent overlay.
+  # If using Video Backgrounds, these can be baked into the video using the "video_processor.py" tool.
+  
+  # Elements are drawn in the order they appear (bottom-to-top)
+  - type: rectangle
+    x: 10
+    y: 10
+    width: 100
+    height: 50
+    color: "255, 0, 0, 255"      # Red
+    radius: 10
+    outline_color: "255, 255, 255, 255"
+    outline_width: 2
+      
+  - type: ellipse
+    x: 150
+    y: 10
+    width: 50
+    height: 50
+    color: "0, 0, 255, 128"      # Semi-transparent Blue
+    outline_color: "255, 255, 255, 255"
+    outline_width: 2
+    shadow:
+      blur: 5
+      color: "0, 0, 0, 255"
+      offset_x: 2
+      offset_y: 2
+      
+  - type: line
+    x: 10
+    y: 80
+    x2: 200
+    y2: 80
+    width: 5
+    color: "0, 255, 0, 255"
+    outline_color: "0, 0, 0, 255"
+    outline_width: 1
+    style: dotted
+    end_cap: round
+    shadow:
+      blur: 2
+      color: "0, 0, 0, 100"
+      offset_x: 3
+      offset_y: 3
 
-STATS:
+  - type: image
+    path: "logo.png"
+    x: 250
+    y: 10
+    scale: 0.5            # 50% size
+    opacity: 0.8          # 80% opacity
+    shadow:
+      blur: 5
+      color: "0, 0, 0, 128"
+      offset_x: 5
+      offset_y: 5
+
+  - type: text
+    text: "UI OVERLAY TEXT"
+    x: 50
+    y: 100
+    font_size: 20
+    color: "255, 255, 255, 255"
+    angle: -10
+    shadow:
+      blur: 2
+      color: "0, 0, 0, 255"
+      offset_x: 2
+      offset_y: 2
+
+STAT:
   CPU:
     PERCENTAGE:
       # In seconds. Longer intervals cause this to refresh more slowly.
