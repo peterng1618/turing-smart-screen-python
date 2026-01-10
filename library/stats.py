@@ -28,6 +28,7 @@ import math
 import os
 import platform
 import sys
+import time
 from typing import List
 
 import babel.dates
@@ -39,6 +40,8 @@ from uptime import uptime
 import library.config as config
 from library.display import display
 from library.log import logger
+from library.ui_renderer import UiRenderer
+from PIL import Image
 
 DEFAULT_HISTORY_SIZE = 10
 
@@ -90,7 +93,20 @@ def get_theme_file_path(name):
         return None
 
 
-def display_themed_value(theme_data, value, min_size=0, unit=''):
+def display_themed_value(theme_data, value, min_size=0, unit='', sensor_id=None):
+    # Capture values for dynamic text if sensor_id provided
+    if sensor_id:
+        # Save raw value
+        config.STATS_RAW[sensor_id] = value
+        
+        # Save formatted value (with/without unit)
+        m_size = theme_data.get("MIN_SIZE", min_size)
+        fmt_text = f"{{:>{m_size}}}".format(value)
+        config.STATS_VALUES[f"{sensor_id}_RAW"] = fmt_text # Store without unit
+        if theme_data.get("SHOW_UNIT", True) and unit:
+            fmt_text += str(unit)
+        config.STATS_VALUES[sensor_id] = fmt_text
+
     if not theme_data.get("SHOW", False):
         return
 
@@ -120,21 +136,23 @@ def display_themed_value(theme_data, value, min_size=0, unit=''):
     )
 
 
-def display_themed_percent_value(theme_data, value):
+def display_themed_percent_value(theme_data, value, sensor_id=None):
     display_themed_value(
         theme_data=theme_data,
         value=int(value),
         min_size=3,
-        unit="%"
+        unit="%",
+        sensor_id=sensor_id
     )
 
 
-def display_themed_temperature_value(theme_data, value):
+def display_themed_temperature_value(theme_data, value, sensor_id=None):
     display_themed_value(
         theme_data=theme_data,
         value=int(value),
         min_size=3,
-        unit="°C"
+        unit="°C",
+        sensor_id=sensor_id
     )
 
 
@@ -275,7 +293,7 @@ class CPU:
 
         display_themed_progress_bar(theme_data['GRAPH'], cpu_percentage)
         display_themed_percent_radial_bar(theme_data['RADIAL'], cpu_percentage)
-        display_themed_percent_value(theme_data['TEXT'], cpu_percentage)
+        display_themed_percent_value(theme_data['TEXT'], cpu_percentage, sensor_id="CPU_PERCENTAGE")
         display_themed_line_graph(theme_data['LINE_GRAPH'], cls.last_values_cpu_percentage)
 
     @classmethod
@@ -290,7 +308,8 @@ class CPU:
             theme_data=theme_data['TEXT'],
             value=f'{freq_ghz:.2f}',
             unit=" GHz",
-            min_size=4
+            min_size=4,
+            sensor_id="CPU_FREQUENCY"
         )
         display_themed_progress_bar(theme_data['GRAPH'], freq_ghz)
         display_themed_radial_bar(
@@ -307,9 +326,9 @@ class CPU:
         # logger.debug(f"CPU Load: ({cpu_load[0]},{cpu_load[1]},{cpu_load[2]})")
         load_theme_data = config.THEME_DATA['STATS']['CPU']['LOAD']
 
-        display_themed_percent_value(load_theme_data['ONE']['TEXT'], cpu_load[0])
-        display_themed_percent_value(load_theme_data['FIVE']['TEXT'], cpu_load[1])
-        display_themed_percent_value(load_theme_data['FIFTEEN']['TEXT'], cpu_load[2])
+        display_themed_percent_value(load_theme_data['ONE']['TEXT'], cpu_load[0], sensor_id="CPU_LOAD_1")
+        display_themed_percent_value(load_theme_data['FIVE']['TEXT'], cpu_load[1], sensor_id="CPU_LOAD_5")
+        display_themed_percent_value(load_theme_data['FIFTEEN']['TEXT'], cpu_load[2], sensor_id="CPU_LOAD_15")
 
     @classmethod
     def temperature(cls):
@@ -333,7 +352,7 @@ class CPU:
                 cpu_temp_graph_data['SHOW'] = False
                 cpu_temp_line_graph_data['SHOW'] = False
 
-        display_themed_temperature_value(cpu_temp_text_data, temperature)
+        display_themed_temperature_value(cpu_temp_text_data, temperature, sensor_id="CPU_TEMPERATURE")
         display_themed_progress_bar(cpu_temp_graph_data, temperature)
         display_themed_temperature_radial_bar(cpu_temp_radial_data, temperature)
         display_themed_line_graph(cpu_temp_line_graph_data, cls.last_values_cpu_temperature)
@@ -367,7 +386,7 @@ class CPU:
                 cpu_fan_graph_data['SHOW'] = False
                 cpu_fan_line_graph_data['SHOW'] = False
 
-        display_themed_percent_value(cpu_fan_text_data, fan_percent)
+        display_themed_percent_value(cpu_fan_text_data, fan_percent, sensor_id="CPU_FAN_SPEED")
         display_themed_progress_bar(cpu_fan_graph_data, fan_percent)
         display_themed_percent_radial_bar(cpu_fan_radial_data, fan_percent)
         display_themed_line_graph(cpu_fan_line_graph_data, cls.last_values_cpu_fan_speed)
@@ -426,7 +445,8 @@ class Gpu:
             theme_data=gpu_mem_text_data,
             value=int(memory_used_mb),
             min_size=5,
-            unit=" M"
+            unit=" M",
+            sensor_id="GPU_MEMORY_USED_LEGACY"
         )
         ################################ end of backward compatibility only
 
@@ -448,7 +468,7 @@ class Gpu:
 
         display_themed_progress_bar(gpu_percent_graph_data, load)
         display_themed_percent_radial_bar(gpu_percent_radial_data, load)
-        display_themed_percent_value(gpu_percent_text_data, load)
+        display_themed_percent_value(gpu_percent_text_data, load, sensor_id="GPU_PERCENTAGE")
         display_themed_line_graph(gpu_percent_line_graph_data, cls.last_values_gpu_percentage)
 
         # GPU mem. usage (%)
@@ -468,7 +488,7 @@ class Gpu:
 
         display_themed_progress_bar(gpu_mem_percent_graph_data, memory_percentage)
         display_themed_percent_radial_bar(gpu_mem_percent_radial_data, memory_percentage)
-        display_themed_percent_value(gpu_mem_percent_text_data, memory_percentage)
+        display_themed_percent_value(gpu_mem_percent_text_data, memory_percentage, sensor_id="GPU_MEMORY_PERCENT")
         display_themed_line_graph(gpu_mem_percent_line_graph_data, cls.last_values_gpu_mem_percentage)
 
         # GPU mem. absolute usage (M)
@@ -483,7 +503,8 @@ class Gpu:
             theme_data=gpu_mem_used_text_data,
             value=int(memory_used_mb),
             min_size=5,
-            unit=" M"
+            unit=" M",
+            sensor_id="GPU_MEMORY_USED"
         )
 
         # GPU mem. total memory (M)
@@ -498,7 +519,8 @@ class Gpu:
             theme_data=gpu_mem_total_text_data,
             value=int(total_memory_mb),
             min_size=5,  # Adjust min_size as necessary for your display
-            unit=" M"  # Assuming the unit is in Megabytes
+            unit=" M",  # Assuming the unit is in Megabytes
+            sensor_id="GPU_MEMORY_TOTAL"
         )
 
         # GPU temperature (°C)
@@ -517,7 +539,7 @@ class Gpu:
                 gpu_temp_graph_data['SHOW'] = False
                 gpu_temp_line_graph_data['SHOW'] = False
 
-        display_themed_temperature_value(gpu_temp_text_data, temperature)
+        display_themed_temperature_value(gpu_temp_text_data, temperature, sensor_id="GPU_TEMPERATURE")
         display_themed_progress_bar(gpu_temp_graph_data, temperature)
         display_themed_temperature_radial_bar(gpu_temp_radial_data, temperature)
         display_themed_line_graph(gpu_temp_line_graph_data, cls.last_values_gpu_temperature)
@@ -543,7 +565,8 @@ class Gpu:
             theme_data=gpu_fps_text_data,
             value=int(fps),
             min_size=4,
-            unit=" FPS"
+            unit=" FPS",
+            sensor_id="GPU_FPS"
         )
         display_themed_radial_bar(
             theme_data=gpu_fps_radial_data,
@@ -569,7 +592,7 @@ class Gpu:
                 gpu_fan_graph_data['SHOW'] = False
                 gpu_fan_line_graph_data['SHOW'] = False
 
-        display_themed_percent_value(gpu_fan_text_data, fan_percent)
+        display_themed_percent_value(gpu_fan_text_data, fan_percent, sensor_id="GPU_FAN_SPEED")
         display_themed_progress_bar(gpu_fan_graph_data, fan_percent)
         display_themed_percent_radial_bar(gpu_fan_radial_data, fan_percent)
         display_themed_line_graph(gpu_fan_line_graph_data, cls.last_values_gpu_fan_speed)
@@ -583,7 +606,8 @@ class Gpu:
             theme_data=gpu_freq_text_data,
             value=f'{freq_ghz:.2f}',
             unit=" GHz",
-            min_size=4
+            min_size=4,
+            sensor_id="GPU_FREQUENCY"
         )
         display_themed_progress_bar(gpu_freq_graph_data, freq_ghz)
         display_themed_radial_bar(
@@ -619,26 +643,29 @@ class Memory:
                         memory_stats_theme_data['VIRTUAL']['LINE_GRAPH'].get("HISTORY_SIZE", DEFAULT_HISTORY_SIZE))
         display_themed_progress_bar(memory_stats_theme_data['VIRTUAL']['GRAPH'], virtual_percent)
         display_themed_percent_radial_bar(memory_stats_theme_data['VIRTUAL']['RADIAL'], virtual_percent)
-        display_themed_percent_value(memory_stats_theme_data['VIRTUAL']['PERCENT_TEXT'], virtual_percent)
+        display_themed_percent_value(memory_stats_theme_data['VIRTUAL']['PERCENT_TEXT'], virtual_percent, sensor_id="MEM_VIRTUAL_PERCENT")
         display_themed_line_graph(memory_stats_theme_data['VIRTUAL']['LINE_GRAPH'], cls.last_values_memory_virtual)
 
         display_themed_value(
             theme_data=memory_stats_theme_data['VIRTUAL']['USED'],
             value=int(sensors.Memory.virtual_used() / 1024 ** 2),
             min_size=5,
-            unit=" M"
+            unit=" M",
+            sensor_id="MEM_VIRTUAL_USED"
         )
         display_themed_value(
             theme_data=memory_stats_theme_data['VIRTUAL']['FREE'],
             value=int(sensors.Memory.virtual_free() / 1024 ** 2),
             min_size=5,
-            unit=" M"
+            unit=" M",
+            sensor_id="MEM_VIRTUAL_FREE"
         )
         display_themed_value(
             theme_data=memory_stats_theme_data['VIRTUAL']['TOTAL'],
             value=int((sensors.Memory.virtual_free() + sensors.Memory.virtual_used()) / 1024 ** 2),
             min_size=5,
-            unit=" M"
+            unit=" M",
+            sensor_id="MEM_VIRTUAL_TOTAL"
         )
 
 
@@ -657,26 +684,29 @@ class Disk:
                         disk_theme_data['USED']['LINE_GRAPH'].get("HISTORY_SIZE", DEFAULT_HISTORY_SIZE))
         display_themed_progress_bar(disk_theme_data['USED']['GRAPH'], disk_usage_percent)
         display_themed_percent_radial_bar(disk_theme_data['USED']['RADIAL'], disk_usage_percent)
-        display_themed_percent_value(disk_theme_data['USED']['PERCENT_TEXT'], disk_usage_percent)
+        display_themed_percent_value(disk_theme_data['USED']['PERCENT_TEXT'], disk_usage_percent, sensor_id="DISK_USED_PERCENT")
         display_themed_line_graph(disk_theme_data['USED']['LINE_GRAPH'], cls.last_values_disk_usage)
 
         display_themed_value(
             theme_data=disk_theme_data['USED']['TEXT'],
             value=int(used / 1000000000),
             min_size=5,
-            unit=" G"
+            unit=" G",
+            sensor_id="DISK_USED"
         )
         display_themed_value(
             theme_data=disk_theme_data['TOTAL']['TEXT'],
             value=int((free + used) / 1000000000),
             min_size=5,
-            unit=" G"
+            unit=" G",
+            sensor_id="DISK_TOTAL"
         )
         display_themed_value(
             theme_data=disk_theme_data['FREE']['TEXT'],
             value=int(free / 1000000000),
             min_size=5,
-            unit=" G"
+            unit=" G",
+            sensor_id="DISK_FREE"
         )
 
 
@@ -718,20 +748,18 @@ class Net:
         Net._show_themed_total_data(net_theme_data['ETH']['DOWNLOADED']['TEXT'], downloaded_eth)
         display_themed_line_graph(net_theme_data['ETH']['DOWNLOAD']['LINE_GRAPH'], cls.last_values_eth_download)
 
-    @staticmethod
-    def _show_themed_total_data(theme_data, amount):
         display_themed_value(
             theme_data=theme_data,
             value=f"{bytes2human(amount)}",
-            min_size=6
+            min_size=6,
+            sensor_id=theme_data.get("SENSOR_ID") # For Net, we might need theme-defined IDs or specific ones
         )
 
-    @staticmethod
-    def _show_themed_tax_rate(theme_data, rate):
         display_themed_value(
             theme_data=theme_data,
             value=f"{bytes2human(rate, '%(value).1f %(symbol)s/s')}",
-            min_size=10
+            min_size=10,
+            sensor_id=theme_data.get("SENSOR_ID")
         )
 
 
@@ -761,14 +789,16 @@ class Date:
         date_format = day_theme_data.get("FORMAT", 'medium')
         display_themed_value(
             theme_data=day_theme_data,
-            value=f"{babel.dates.format_date(date_now, format=date_format, locale=lc_time)}"
+            value=f"{babel.dates.format_date(date_now, format=date_format, locale=lc_time)}",
+            sensor_id="DATE_DAY"
         )
 
         hour_theme_data = date_theme_data['HOUR']['TEXT']
         time_format = hour_theme_data.get("FORMAT", 'medium')
         display_themed_value(
             theme_data=hour_theme_data,
-            value=f"{babel.dates.format_time(date_now, format=time_format, locale=lc_time)}"
+            value=f"{babel.dates.format_time(date_now, format=time_format, locale=lc_time)}",
+            sensor_id="DATE_HOUR"
         )
 
 
@@ -788,13 +818,15 @@ class SystemUptime:
         systemuptime_sec_theme_data = systemuptime_theme_data['SECONDS']['TEXT']
         display_themed_value(
             theme_data=systemuptime_sec_theme_data,
-            value=uptimesec
+            value=uptimesec,
+            sensor_id="UPTIME_SECONDS"
         )
 
         systemuptime_formatted_theme_data = systemuptime_theme_data['FORMATTED']['TEXT']
         display_themed_value(
             theme_data=systemuptime_formatted_theme_data,
-            value=uptimeformatted
+            value=uptimeformatted,
+            sensor_id="UPTIME_FORMATTED"
         )
 
 
@@ -905,15 +937,15 @@ class Weather:
 
         if activate:
             # Display Temperature
-            display_themed_value(theme_data=wtemperature_theme_data, value=temp)
+            display_themed_value(theme_data=wtemperature_theme_data, value=temp, sensor_id="WEATHER_TEMP")
             # Display Temperature Felt
-            display_themed_value(theme_data=wfelt_theme_data, value=feel)
+            display_themed_value(theme_data=wfelt_theme_data, value=feel, sensor_id="WEATHER_FEEL")
             # Display Update Time
-            display_themed_value(theme_data=wupdatetime_theme_data, value=time)
+            display_themed_value(theme_data=wupdatetime_theme_data, value=time, sensor_id="WEATHER_TIME")
             # Display Humidity
-            display_themed_value(theme_data=whumidity_theme_data, value=humidity)
+            display_themed_value(theme_data=whumidity_theme_data, value=humidity, sensor_id="WEATHER_HUMIDITY")
             # Display Weather Description (or error message)
-            display_themed_value(theme_data=wdescription_theme_data, value=desc)
+            display_themed_value(theme_data=wdescription_theme_data, value=desc, sensor_id="WEATHER_DESC")
 
 
 class Ping:
@@ -940,6 +972,90 @@ class Ping:
             theme_data=theme_data['TEXT'],
             value=int(delay),
             unit="ms",
-            min_size=6
+            min_size=6,
+            sensor_id="PING"
         )
         display_themed_line_graph(theme_data['LINE_GRAPH'], cls.last_values_ping)
+
+
+class DynamicText:
+    last_updates = {}
+
+    @staticmethod
+    def stats():
+        if not config.THEME_DATA.get('dynamic_text', False):
+            return
+
+        renderer = UiRenderer(config.THEME_DATA, config.THEME_DATA.get('PATH', ''))
+        current_time = time.time()
+        global_interval = config.THEME_DATA['dynamic_text'].get("INTERVAL", 1)
+
+        for key, text_config in config.THEME_DATA['dynamic_text'].items():
+            if key == "INTERVAL":
+                continue
+            if not text_config.get("SHOW", True):
+                continue
+
+            # Check per-element interval
+            element_interval = text_config.get("INTERVAL", global_interval)
+            last_update = DynamicText.last_updates.get(key, 0)
+            
+            if current_time - last_update < element_interval:
+                continue
+
+            DynamicText.last_updates[key] = current_time
+
+            template = text_config.get("TEXT", "")
+            if not template:
+                continue
+
+            # Variable resolution
+            resolved_text = template
+            import re
+            placeholders = re.findall(r'\{(.*?)\}', template)
+            
+            for placeholder in placeholders:
+                parts = placeholder.split(':')
+                sensor_id = parts[0]
+                flag = parts[1] if len(parts) > 1 else None
+                
+                value = ""
+                if flag == 'nu':
+                    value = str(config.STATS_VALUES.get(f"{sensor_id}_RAW", f"{{{placeholder}}}"))
+                elif flag == 'u':
+                    value = str(config.STATS_VALUES.get(sensor_id, f"{{{placeholder}}}"))
+                elif flag == 'r':
+                    value = str(config.STATS_RAW.get(sensor_id, f"{{{placeholder}}}"))
+                else:
+                    value = str(config.STATS_VALUES.get(sensor_id, f"{{{placeholder}}}"))
+                
+                resolved_text = resolved_text.replace(f"{{{placeholder}}}", value)
+
+            # Use UiRenderer for styling (angle, opacity, shadow)
+            styled_config = text_config.copy()
+            styled_config['text'] = resolved_text
+            
+            img, (x, y) = renderer.draw_text_to_image(styled_config)
+            if not img:
+                continue
+
+            # We need a canvas to apply styling (shadows/rotations can exceed img bounds)
+            # Create a localized canvas or just use a full screen one?
+            # Creating a full screen canvas for every dynamic text might be slow.
+            # But let's see: UiRenderer.apply_element_styling expects a canvas.
+            
+            # Calculate a safe canvas size that handles rotation and shadow
+            # For simplicity, let's use a sub-canvas that is large enough
+            pad = 100 # Safe padding for rotation/shadow
+            cw, ch = img.width + pad*2, img.height + pad*2
+            temp_canvas = Image.new('RGBA', (cw, ch), (0, 0, 0, 0))
+            
+            renderer.apply_element_styling(temp_canvas, img, pad, pad, styled_config)
+            
+            # Crop to content to get the final styled image and its offset
+            bbox = temp_canvas.getbbox()
+            if bbox:
+                final_styled_img = temp_canvas.crop(bbox)
+                final_x = x + bbox[0] - pad
+                final_y = y + bbox[1] - pad
+                display.lcd.DisplayPILImage(final_styled_img, int(final_x), int(final_y))

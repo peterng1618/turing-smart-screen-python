@@ -650,34 +650,30 @@ class UiRenderer:
         # Fallback for unknown types
         return None, (0, 0)
 
-    def draw_text_to_image(self, text_config):
-        """Render text to an RGBA image."""
+    def draw_text_to_image(self, text_config, sampling=1):
+        """Render text to an RGBA image with optional supersampling."""
         text = text_config.get('text', '')
         if not text: return None, (0,0)
         
-        font_path_rel = text_config.get('font', "roboto/Roboto-Regular.ttf")
-        # Try to locate font. config.FONTS_DIR is usually absolute path from library
-        # But we want to support relative to theme?
-        # Usually fonts are in res/fonts. User might supply custom one in theme.
+        # Supersampling factor is now a parameter
         
-        # Check theme folder first
+        font_path_rel = text_config.get('font', "roboto/Roboto-Regular.ttf")
         font_path = os.path.join(self.theme_path, font_path_rel)
         if not os.path.exists(font_path):
-             # Try global fonts
              if hasattr(config, 'FONTS_DIR'):
                  font_path = os.path.join(config.FONTS_DIR, font_path_rel)
         
         size = text_config.get('size', text_config.get('font_size', 20))
+        s_size = int(size * sampling)
         color = self._resolve_color(text_config.get('color', text_config.get('font_color', 'white')), text_config.get('alpha'))
         
         try:
-            font = ImageFont.truetype(font_path, size)
+            font = ImageFont.truetype(font_path, s_size)
         except OSError:
             logger.warning(f"Could not load font {font_path}, fallback to default")
             font = ImageFont.load_default()
 
-        # Calculate size
-        # ImageDraw.textbbox is preferred in newer Pillow, textsize is deprecated
+        # Calculate size at supersampled scale
         dummy = Image.new('RGBA', (1,1))
         draw = ImageDraw.Draw(dummy)
         
@@ -685,55 +681,47 @@ class UiRenderer:
             bbox = draw.textbbox((0, 0), text, font=font)
             w = bbox[2] - bbox[0]
             h = bbox[3] - bbox[1]
-            offset_y = bbox[1] # usually negative (ascent)
+            offset_y = bbox[1]
         except AttributeError:
-            # Old Pillow fallback
             w, h = draw.textsize(text, font=font)
             offset_y = 0
 
-        img_w = w + 10 # Padding
-        img_h = h + 10
+        # Create image at 4x
+        pad = 5 * sampling
+        img_w = w + pad * 2
+        img_h = h + pad * 2
         
-        img = Image.new('RGBA', (img_w, img_h), (0, 0, 0, 0))
+        img = Image.new('RGBA', (int(img_w), int(img_h)), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
+        d.text((pad - bbox[0] if 'bbox' in locals() else pad, pad - bbox[1] if 'bbox' in locals() else pad), 
+               text, font=font, fill=color)
         
-        # Draw Text
-        draw_x = 0
-        draw_y = 0 
+        # Cropping to content at 4x
+        bbox_crop = img.getbbox()
+        if bbox_crop:
+            img = img.crop(bbox_crop)
         
-        d.text((draw_x, draw_y), text, font=font, fill=color)
-        
-        # Cropping to content
-        bbox = img.getbbox()
-        if bbox:
-            img = img.crop(bbox)
+        # Downscale
+        new_w = img.width // sampling
+        new_h = img.height // sampling
+        if new_w > 0 and new_h > 0:
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
         
         x = text_config.get('x', 0)
         y = text_config.get('y', 0)
         
-        # Alignment logic (simple offset adjustment)
-        # Note: if user specifies center align, x represents the center.
-        align = text_config.get('align', 'left')
-        anchor = text_config.get('anchor', 'nw') # Pillow anchors are confusing, let's stick to theme logic
-        
-        # Simplistic anchor handling if not 'default'
-        # If align center, shift x by w/2?
-        # Standard theme usage: x,y is top-left usually.
-        
         return img, (x, y)
 
-    def draw_icon_to_image(self, icon_config):
-        """Render an icon (from local, remote font, or auto-resolved FA URL) to an RGBA image."""
+    def draw_icon_to_image(self, icon_config, sampling=1):
+        """Render an icon with optional supersampling."""
         icon_val = icon_config.get('icon', '')
         if not icon_val: return None, (0,0)
         
         # 1. Resolve Unicode and Font Link
-        # If user provides a direct link in icon_config, it takes precedence over auto-resolved link
         auto_unicode, auto_link = font_manager.resolve_icon_metadata(icon_val)
         font_link = icon_config.get('link') or auto_link
         
         # 2. Determine text character
-        # If lookup failed for a URL, definitely don't render the URL itself
         if not auto_unicode and ('http://' in icon_val or 'https://' in icon_val):
             logger.warning(f"Could not resolve icon from URL: {icon_val}")
             return None, (0,0)
@@ -751,21 +739,21 @@ class UiRenderer:
         if font_link:
             font_path = font_manager.get_font_path(font_link)
         else:
-            # Fallback
             font_path = os.path.join(config.FONTS_DIR, 'fa-solid-900.ttf')
             if not os.path.exists(font_path):
                 font_path = os.path.join(config.FONTS_DIR, 'roboto/Roboto-Regular.ttf')
 
         size = icon_config.get('size', icon_config.get('font_size', 40))
+        s_size = int(size * sampling)
         color = self._resolve_color(icon_config.get('color', 'white'), icon_config.get('alpha'))
         
         try:
-            font = ImageFont.truetype(font_path, size)
+            font = ImageFont.truetype(font_path, s_size)
         except OSError:
             logger.warning(f"Could not load icon font {font_path}")
             return None, (0,0)
 
-        # Precise BBox calculation
+        # Precise BBox calculation at 4x
         dummy = Image.new('RGBA', (1,1))
         d_dummy = ImageDraw.Draw(dummy)
         bbox = d_dummy.textbbox((0, 0), text, font=font)
@@ -774,7 +762,7 @@ class UiRenderer:
         h = bbox[3] - bbox[1]
         
         # Add padding
-        pad = int(size * 0.1) + 5
+        pad = int(s_size * 0.1) + 5 * sampling
         img = Image.new('RGBA', (int(w + pad*2), int(h + pad*2)), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
         
@@ -783,32 +771,65 @@ class UiRenderer:
         
         bbox_final = img.getbbox()
         if bbox_final:
-            # Align top-left padding
             img = img.crop(bbox_final)
             
-        # Scale support
+        # Downscale
+        new_w = img.width // sampling
+        new_h = img.height // sampling
+        if new_w > 0 and new_h > 0:
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            
+        # Scale support (optional extra scaling from config)
         scale = icon_config.get('scale', 1.0)
         if scale != 1.0:
             new_w = int(img.width * scale)
             new_h = int(img.height * scale)
-            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            if new_w > 0 and new_h > 0:
+                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
             
         x = icon_config.get('x', 0)
         y = icon_config.get('y', 0)
         
         return img, (x, y)
 
+    def apply_element_styling(self, canvas, img, x, y, config_item):
+        """Apply opacity, rotation, and shadow to an element and composite it onto the canvas."""
+        if not img: return
+        
+        # Opacity/Alpha (Global for element, distinct from color alpha)
+        opacity = config_item.get('opacity', 1.0)
+        if opacity < 1.0:
+            r, g, b, a = img.split()
+            a = a.point(lambda p: int(p * opacity))
+            img = Image.merge('RGBA', (r, g, b, a))
+
+        # Rotation (supports both 'angle' and 'rotation' property names)
+        angle = config_item.get('angle', config_item.get('rotation', 0))
+        if angle != 0:
+            cx = x + img.width / 2
+            cy = y + img.height / 2
+            img = img.rotate(-angle, expand=True, resample=Image.BICUBIC)
+            x = cx - img.width / 2
+            y = cy - img.height / 2
+        
+        # Shadow
+        shadow_config = config_item.get('shadow')
+        if shadow_config:
+            shadow_img, sx, sy = self._create_shadow_layer(img, shadow_config)
+            if shadow_img:
+                canvas.alpha_composite(shadow_img, (int(x + sx), int(y + sy)))
+        
+        canvas.alpha_composite(img, (int(x), int(y)))
+
     def generate_overlay(self):
         overlay = Image.new('RGBA', (self.width, self.height), (0, 0, 0, 0))
         ui_elements = self.theme_data.get('ui_elements', [])
         
-        # Ensure it's a list (backward compatibility if user still uses dict structure might be nice, 
-        # but requested flattened list implies checking type)
+        # Ensure it's a list (backward compatibility if user still uses dict structure might be nice)
         if isinstance(ui_elements, dict):
-            # Convert legacy dict structure to flat list for backward compatibility or transition
             flat_list = []
             for shape in ui_elements.get('shapes', []):
-                shape['type'] = shape.get('type', 'rectangle') # Default
+                shape['type'] = shape.get('type', 'rectangle')
                 flat_list.append(shape)
             for text in ui_elements.get('ui_text', []):
                 text['type'] = 'text'
@@ -816,43 +837,10 @@ class UiRenderer:
             for img in ui_elements.get('images', []):
                 img['type'] = 'image'
                 flat_list.append(img)
-            ui_elements = flat_list # Use this temporary flat list
+            ui_elements = flat_list
 
         if not isinstance(ui_elements, list):
-             # Log warning or just return empty?
              return overlay
-
-        # Helper to process an element (Rotations, Shadows, Composite)
-        def process_element(img, x, y, config_item):
-            if not img: return
-            
-            # Opacity/Alpha (Global for element, distinct from color alpha)
-            opacity = config_item.get('opacity', 1.0)
-            if opacity < 1.0:
-                # Multiply alpha channel
-                # This is expensive, check if separate alpha can be applied
-                # Image.putalpha sets constant alpha, we need to multiply.
-                r, g, b, a = img.split()
-                a = a.point(lambda p: int(p * opacity))
-                img = Image.merge('RGBA', (r, g, b, a))
-
-            # Rotation (supports both 'angle' and 'rotation' property names)
-            angle = config_item.get('angle', config_item.get('rotation', 0))
-            if angle != 0:
-                cx = x + img.width / 2
-                cy = y + img.height / 2
-                img = img.rotate(-angle, expand=True, resample=Image.BICUBIC)
-                x = cx - img.width / 2
-                y = cy - img.height / 2
-            
-            # Shadow
-            shadow_config = config_item.get('shadow')
-            if shadow_config:
-                shadow_img, sx, sy = self._create_shadow_layer(img, shadow_config)
-                if shadow_img:
-                    overlay.alpha_composite(shadow_img, (int(x + sx), int(y + sy)))
-            
-            overlay.alpha_composite(img, (int(x), int(y)))
 
         # Process Queue Linear
         for config_item in ui_elements:
@@ -860,15 +848,15 @@ class UiRenderer:
             
             if elem_type in ('rectangle', 'ellipse', 'circle', 'line', 'triangle'):
                 img, (x, y) = self.draw_shape_to_image(config_item)
-                process_element(img, x, y, config_item)
+                self.apply_element_styling(overlay, img, x, y, config_item)
                 
             elif elem_type == 'text':
-                img, (x, y) = self.draw_text_to_image(config_item)
-                process_element(img, x, y, config_item)
+                img, (x, y) = self.draw_text_to_image(config_item, sampling=4)
+                self.apply_element_styling(overlay, img, x, y, config_item)
                 
             elif elem_type == 'icon':
-                img, (x, y) = self.draw_icon_to_image(config_item)
-                process_element(img, x, y, config_item)
+                img, (x, y) = self.draw_icon_to_image(config_item, sampling=4)
+                self.apply_element_styling(overlay, img, x, y, config_item)
                 
             elif elem_type == 'image':
                  path = config_item.get('path')
@@ -914,7 +902,7 @@ class UiRenderer:
                                 
                             x = config_item.get('x', 0) - x_shift
                             y = config_item.get('y', 0) - y_shift
-                            process_element(ui_img, x, y, config_item)
+                            self.apply_element_styling(overlay, ui_img, x, y, config_item)
                         except Exception as e:
                             logger.error(f"Error drawing image {path}: {e}")
         

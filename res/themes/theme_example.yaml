@@ -1811,3 +1811,40 @@ STAT:
       BACKGROUND_IMAGE: background.png
       ALIGN: left  # left / center / right
       ANCHOR: lt   # Check https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html
+
+# Dynamic Text Configuration
+# Similar to static_text, but allows embedding sensor values with variables
+# Syntax: {SENSOR_ID} or {SENSOR_ID:FLAG}
+# FLAGS:
+#   - u : with unit (default)
+#   - nu: no unit
+#   - r : raw value (as returned by sensor)
+dynamic_text:
+  INTERVAL: 1 # Refresh interval in seconds
+  SYSTEM_SUMMARY:
+    SHOW: True
+    TEXT: "CPU: {CPU_PERCENTAGE:u} | GPU: {GPU_PERCENTAGE:u} | RAM: {MEM_VIRTUAL_PERCENT:u}"
+    X: 10
+    Y: 450
+    FONT: roboto-mono/RobotoMono-Bold.ttf
+    FONT_SIZE: 12
+    FONT_COLOR: 255, 255, 255
+    # BACKGROUND_COLOR: 0, 0, 0
+    BACKGROUND_IMAGE: background.png
+    ALIGN: left
+    ANCHOR: lt
+  STYLED_DYNAMIC_TEXT:
+    SHOW: True
+    TEXT: "Styled Variable: {CPU_PERCENTAGE:u}"
+    X: 10
+    Y: 410
+    FONT: roboto-mono/RobotoMono-Bold.ttf
+    FONT_SIZE: 14
+    FONT_COLOR: 255, 200, 0
+    angle: 5
+    opacity: 0.8
+    shadow:
+      color: 0, 0, 0
+      blur: 3
+      offset_x: 2
+      offset_y: 2

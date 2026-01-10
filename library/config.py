@@ -85,3 +85,8 @@ load_theme()
 
 # Queue containing the serial requests to send to the screen
 update_queue = queue.Queue()
+
+# Global store for sensor values (captured in stats.py)
+# STATS_VALUES stores formatted strings, STATS_RAW stores raw numeric/date values
+STATS_VALUES = {}
+STATS_RAW = {}

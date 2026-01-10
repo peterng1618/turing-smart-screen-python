@@ -185,6 +185,13 @@ def PingStats():
     stats.Ping.stats()
 
 
+@async_job("Dynamic_Text")
+@schedule(0.1)
+def DynamicTextStats():
+    # logger.debug("Refresh Dynamic Text")
+    stats.DynamicText.stats()
+
+
 @async_job("Queue_Handler")
 @schedule(timedelta(milliseconds=1).total_seconds())
 def QueueHandler():
