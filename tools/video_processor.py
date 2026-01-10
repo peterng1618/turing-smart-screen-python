@@ -1,10 +1,31 @@
+"""
+Video Processor Tool - PyAV Implementation
+
+Processes videos for Turing Smart Screen themes using PyAV (bundled FFmpeg libraries).
+No separate FFmpeg installation required.
+
+Features:
+- Seamless loop crossfade (LOOP_FADE_DURATION)
+- Rotation (0, 90, 180, 270 degrees)
+- Flip (horizontal, vertical, both)
+- Resize & crop to target display dimensions
+- Trim (START_OFFSET, DURATION)
+- Audio removal
+- UI overlay baking
+
+Usage:
+    python tools/video_processor.py "path/to/theme/folder" "path/to/source_video.mp4"
+"""
 
 import os
 import sys
-import subprocess
-import shutil
 import argparse
 from pathlib import Path
+from fractions import Fraction
+
+import av
+import numpy as np
+from PIL import Image
 
 # Add project root to path to allow imports
 sys.path.append(str(Path(__file__).parent.parent.resolve()))
@@ -17,165 +38,427 @@ import logging
 # Configure logger for this tool
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def check_ffmpeg():
-    """Check if ffmpeg is available in system PATH."""
-    try:
-        subprocess.run(['ffmpeg', '-version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
 
-def get_video_dimensions(video_path):
-    """Get video dimensions using ffprobe."""
-    try:
-        cmd = [
-            'ffprobe', 
-            '-v', 'error', 
-            '-select_streams', 'v:0', 
-            '-show_entries', 'stream=width,height', 
-            '-of', 'csv=s=x:p=0', 
-            video_path
-        ]
-        output = subprocess.check_output(cmd).decode('utf-8').strip()
-        width, height = map(int, output.split('x'))
-        return width, height
-    except Exception as e:
-        logger.error(f"Failed to get video dimensions: {e}")
-        return None, None
-
-def process_video(theme_path_str, source_video_path, output_video_path=None):
+def parse_time_string(time_str: str) -> float:
     """
-    Process a video for a specific theme:
-    1. Generate UI overlay from theme config.
-    2. Use FFmpeg to:
-       - Resize/Crop video to match theme display size.
-       - Overlay the UI image.
-       - Strip audio.
+    Parse mm:ss format time string to seconds.
+    
+    Args:
+        time_str: Time in mm:ss format (e.g., "01:30" for 1 minute 30 seconds)
+        
+    Returns:
+        Time in seconds as float
     """
-    if not check_ffmpeg():
-        logger.error("FFmpeg not found! Please install FFmpeg and add it to your PATH.")
-        return False
+    if not time_str:
+        return 0.0
+    
+    parts = time_str.strip().split(':')
+    if len(parts) == 2:
+        minutes, seconds = int(parts[0]), float(parts[1])
+        return minutes * 60 + seconds
+    elif len(parts) == 1:
+        return float(parts[0])
+    else:
+        logger.warning(f"Invalid time format: {time_str}, expected mm:ss")
+        return 0.0
 
+
+def get_video_info(container: av.container.InputContainer) -> dict:
+    """
+    Get video stream information.
+    
+    Returns dict with: width, height, fps, duration, total_frames
+    """
+    video_stream = container.streams.video[0]
+    
+    # Calculate duration in seconds
+    if video_stream.duration is not None:
+        duration = float(video_stream.duration * video_stream.time_base)
+    elif container.duration is not None:
+        duration = container.duration / av.time_base
+    else:
+        duration = 0.0
+    
+    # Get FPS
+    fps = float(video_stream.average_rate) if video_stream.average_rate else 30.0
+    
+    # Estimate total frames
+    total_frames = int(video_stream.frames) if video_stream.frames else int(duration * fps)
+    
+    return {
+        'width': video_stream.width,
+        'height': video_stream.height,
+        'fps': fps,
+        'duration': duration,
+        'total_frames': total_frames,
+        'codec': video_stream.codec_context.name,
+    }
+
+
+def apply_rotation(frame_array: np.ndarray, rotation: int) -> np.ndarray:
+    """
+    Apply rotation to frame.
+    
+    Args:
+        frame_array: NumPy array (H, W, C) in RGB
+        rotation: Degrees (0, 90, 180, 270)
+        
+    Returns:
+        Rotated frame array
+    """
+    if rotation == 0:
+        return frame_array
+    elif rotation == 90:
+        return np.rot90(frame_array, k=-1)  # Clockwise
+    elif rotation == 180:
+        return np.rot90(frame_array, k=2)
+    elif rotation == 270:
+        return np.rot90(frame_array, k=1)  # Counter-clockwise
+    else:
+        logger.warning(f"Invalid rotation: {rotation}, using 0")
+        return frame_array
+
+
+def apply_flip(frame_array: np.ndarray, flip: str) -> np.ndarray:
+    """
+    Apply flip transformation to frame.
+    
+    Args:
+        frame_array: NumPy array (H, W, C) in RGB
+        flip: 'horizontal', 'vertical', or 'both'
+        
+    Returns:
+        Flipped frame array
+    """
+    if not flip:
+        return frame_array
+    
+    flip_lower = flip.lower()
+    if flip_lower == 'horizontal':
+        return np.fliplr(frame_array)
+    elif flip_lower == 'vertical':
+        return np.flipud(frame_array)
+    elif flip_lower == 'both':
+        return np.flipud(np.fliplr(frame_array))
+    else:
+        logger.warning(f"Invalid flip: {flip}, skipping")
+        return frame_array
+
+
+def resize_and_crop(frame_array: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
+    """
+    Resize frame to fill target dimensions, then center-crop.
+    
+    Uses PIL for high-quality resizing.
+    """
+    img = Image.fromarray(frame_array)
+    src_w, src_h = img.size
+    
+    # Calculate scale to fill (cover) the target
+    scale_w = target_w / src_w
+    scale_h = target_h / src_h
+    scale = max(scale_w, scale_h)
+    
+    # Resize
+    new_w = int(src_w * scale)
+    new_h = int(src_h * scale)
+    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    
+    # Center crop
+    left = (new_w - target_w) // 2
+    top = (new_h - target_h) // 2
+    img = img.crop((left, top, left + target_w, top + target_h))
+    
+    return np.array(img)
+
+
+def apply_overlay(frame_array: np.ndarray, overlay: Image.Image) -> np.ndarray:
+    """
+    Composite overlay image onto frame.
+    
+    Args:
+        frame_array: NumPy array (H, W, C) in RGB
+        overlay: PIL Image with alpha channel (RGBA)
+        
+    Returns:
+        Composited frame array
+    """
+    frame_img = Image.fromarray(frame_array).convert('RGBA')
+    overlay_resized = overlay.resize(frame_img.size, Image.Resampling.LANCZOS)
+    
+    # Composite
+    result = Image.alpha_composite(frame_img, overlay_resized)
+    
+    return np.array(result.convert('RGB'))
+
+
+def crossfade_frames(frames_a: list, frames_b: list) -> list:
+    """
+    Create crossfade transition between two frame sequences.
+    
+    Args:
+        frames_a: List of ending frames (fade out)
+        frames_b: List of beginning frames (fade in)
+        
+    Returns:
+        List of blended frames (same length as inputs)
+    """
+    if len(frames_a) != len(frames_b):
+        raise ValueError("Frame lists must have same length for crossfade")
+    
+    blended = []
+    num_frames = len(frames_a)
+    
+    for i, (fa, fb) in enumerate(zip(frames_a, frames_b)):
+        # Alpha goes from 0 to 1 (fa fades out, fb fades in)
+        alpha = i / (num_frames - 1) if num_frames > 1 else 0.5
+        
+        # Blend: result = (1 - alpha) * fa + alpha * fb
+        blended_frame = ((1 - alpha) * fa.astype(np.float32) + 
+                         alpha * fb.astype(np.float32)).astype(np.uint8)
+        blended.append(blended_frame)
+    
+    return blended
+
+
+def process_video(theme_path_str: str, source_video_path: str, output_video_path: str = None) -> bool:
+    """
+    Process a video for a specific theme using PyAV.
+    
+    Pipeline:
+    1. Load theme config and generate UI overlay
+    2. Open source video
+    3. Apply trim (START_OFFSET, DURATION)
+    4. Apply rotation
+    5. Apply flip
+    6. Resize & crop to target dimensions
+    7. Apply crossfade loop if LOOP_FADE_DURATION > 0
+    8. Apply UI overlay
+    9. Encode to MP4 (H.264, no audio)
+    
+    Returns:
+        True on success, False on failure
+    """
     theme_path = Path(theme_path_str).resolve()
     if not theme_path.exists():
         logger.error(f"Theme path not found: {theme_path}")
         return False
-        
-    # Load theme data manually since we might be running outside main app context
+    
+    if not Path(source_video_path).exists():
+        logger.error(f"Source video not found: {source_video_path}")
+        return False
+    
+    # Load theme data
     try:
         theme_yaml_path = theme_path / "theme.yaml"
-        # We use config.load_yaml but need to setup paths first if not already done
-        # reusing library.config logic but pointed at specific theme
         theme_data = config.load_yaml(theme_yaml_path)
-        # Verify defaults/merge if needed (simplified here)
     except Exception as e:
         logger.error(f"Failed to load theme YAML: {e}")
         return False
-
-    # Initialize Renderer
+    
+    # Get video processing options from theme
+    video_bg = theme_data.get('video_background', {})
+    loop_fade_duration = float(video_bg.get('LOOP_FADE_DURATION', 0))
+    rotation = int(video_bg.get('ROTATE', 0))
+    flip = video_bg.get('FLIP', None)
+    start_offset = parse_time_string(video_bg.get('START_OFFSET', '00:00'))
+    duration_str = video_bg.get('DURATION', None)
+    
+    # Initialize Renderer and get target dimensions
     renderer = UiRenderer(theme_data, theme_path)
+    target_w = renderer.width
+    target_h = renderer.height
+    logger.info(f"Target resolution: {target_w}x{target_h}")
     
     # Generate Overlay
     logger.info("Generating UI overlay...")
     overlay_img = renderer.generate_overlay()
-    overlay_path = theme_path / "temp_overlay.png"
-    overlay_img.save(overlay_path)
     
-    # Determine target resolution
-    target_w = renderer.width
-    target_h = renderer.height
-    logger.info(f"Target resolution: {target_w}x{target_h}")
-
-    # Determine Output Path
+    # Determine output path
     if not output_video_path:
-        # Default: source_processed.mp4
         source_path_obj = Path(source_video_path)
-        output_video_path = source_path_obj.with_name(f"{source_path_obj.stem}_processed.mp4")
+        output_video_path = str(source_path_obj.with_name(f"{source_path_obj.stem}_processed.mp4"))
     
-    # Construct FFmpeg command
-    # Filter complex:
-    # 1. Scale video to fill target dimensions while maintaining aspect ratio (crop if needed)
-    #    scale=-1:target_h (if h is limiting) or target_w:-1
-    #    We use a robust scale+crop filter chain:
-    #    scale=w=TARGET_W:h=TARGET_H:force_original_aspect_ratio=increase,crop=TARGET_W:TARGET_H
-    # 2. Overlay the UI image
-    
-    scale_crop_filter = f"scale=w={target_w}:h={target_h}:force_original_aspect_ratio=increase,crop={target_w}:{target_h}"
-    
-    cmd = [
-        'ffmpeg',
-        '-y', # Overwrite output
-        '-i', source_video_path,
-        '-i', str(overlay_path),
-        '-filter_complex', f"[0:v]{scale_crop_filter}[bg];[bg][1:v]overlay=0:0[out]",
-        '-map', '[out]',
-        '-an', # Remove audio
-        '-c:v', 'libx264',
-        '-pix_fmt', 'yuv420p', # Ensure compatibility
-        '-preset', 'fast',
-        str(output_video_path)
-    ]
-    
-    logger.info(f"Processing video: {source_video_path} -> {output_video_path}")
-    logger.info(f"FFmpeg command: {' '.join(cmd)}")
-    
+    # Open source video
+    logger.info(f"Opening source video: {source_video_path}")
     try:
-        subprocess.run(cmd, check=True)
-        logger.info("Video processing complete.")
-        
-        # Cleanup temp overlay
-        if os.path.exists(overlay_path):
-            os.remove(overlay_path)
-        
-        # Update theme configuration
-        update_theme_config(theme_path, source_video_path, output_video_path)
-            
-        return True
-    except subprocess.CalledProcessError as e:
-        logger.error(f"FFmpeg failed: {e}")
+        input_container = av.open(source_video_path)
+    except av.AVError as e:
+        logger.error(f"Failed to open video: {e}")
         return False
+    
+    video_info = get_video_info(input_container)
+    logger.info(f"Source: {video_info['width']}x{video_info['height']}, "
+                f"{video_info['fps']:.2f} fps, {video_info['duration']:.2f}s")
+    
+    # Calculate trim parameters
+    source_duration = video_info['duration']
+    if start_offset >= source_duration:
+        logger.error(f"START_OFFSET ({start_offset}s) exceeds video duration ({source_duration}s)")
+        return False
+    
+    if duration_str:
+        target_duration = parse_time_string(duration_str)
+        end_time = min(start_offset + target_duration, source_duration)
+    else:
+        target_duration = source_duration - start_offset
+        end_time = source_duration
+    
+    logger.info(f"Trim: {start_offset:.2f}s to {end_time:.2f}s ({target_duration:.2f}s)")
+    
+    # Calculate crossfade frame count
+    fps = video_info['fps']
+    fade_frames = int(loop_fade_duration * fps) if loop_fade_duration > 0 else 0
+    
+    if fade_frames > 0:
+        logger.info(f"Crossfade: {loop_fade_duration}s ({fade_frames} frames)")
+    
+    # First pass: decode all frames with transformations
+    logger.info("Decoding and transforming frames...")
+    all_frames = []
+    frame_count = 0
+    
+    input_container.seek(int(start_offset * av.time_base))
+    video_stream = input_container.streams.video[0]
+    
+    for frame in input_container.decode(video_stream):
+        # Calculate frame time
+        frame_time = float(frame.pts * frame.time_base) if frame.pts else frame_count / fps
+        
+        # Skip frames before start offset (in case seek wasn't exact)
+        if frame_time < start_offset:
+            continue
+        
+        # Stop at end time
+        if frame_time >= end_time:
+            break
+        
+        # Convert to numpy array
+        frame_array = frame.to_ndarray(format='rgb24')
+        
+        # Apply transformations
+        frame_array = apply_rotation(frame_array, rotation)
+        frame_array = apply_flip(frame_array, flip)
+        frame_array = resize_and_crop(frame_array, target_w, target_h)
+        
+        all_frames.append(frame_array)
+        frame_count += 1
+        
+        if frame_count % 100 == 0:
+            logger.info(f"  Decoded {frame_count} frames...")
+    
+    input_container.close()
+    logger.info(f"Decoded {len(all_frames)} frames total")
+    
+    if len(all_frames) < 2:
+        logger.error("Not enough frames in video")
+        return False
+    
+    # Apply crossfade loop if requested
+    if fade_frames > 0 and fade_frames < len(all_frames):
+        logger.info("Applying crossfade loop...")
+        
+        # Split frames
+        # Beginning segment (to be moved to end): first fade_frames
+        # Main body: everything after beginning
+        beginning_segment = all_frames[:fade_frames]
+        main_body = all_frames[fade_frames:]
+        
+        # New order: main_body + beginning_segment
+        # But we blend the junction: end of main_body fades to beginning_segment
+        
+        # Get frames to blend
+        # End of main_body (last fade_frames)
+        end_frames = main_body[-fade_frames:]
+        # Beginning segment (first fade_frames, now at the end)
+        start_frames = beginning_segment
+        
+        # Create crossfade
+        blended = crossfade_frames(end_frames, start_frames)
+        
+        # Reconstruct: main_body (without last fade_frames) + blended
+        all_frames = main_body[:-fade_frames] + blended
+        
+        logger.info(f"Crossfade applied, final frame count: {len(all_frames)}")
+    
+    # Apply overlay to all frames
+    logger.info("Applying UI overlay...")
+    for i in range(len(all_frames)):
+        all_frames[i] = apply_overlay(all_frames[i], overlay_img)
+        if (i + 1) % 100 == 0:
+            logger.info(f"  Overlaid {i + 1} frames...")
+    
+    # Encode output video
+    logger.info(f"Encoding output: {output_video_path}")
+    
+    output_container = av.open(output_video_path, mode='w')
+    
+    # Configure output stream (H.264, no audio)
+    # Convert fps to Fraction for PyAV 16.x compatibility
+    fps_fraction = Fraction(fps).limit_denominator(10000)
+    output_stream = output_container.add_stream('libx264', rate=fps_fraction)
+    output_stream.width = target_w
+    output_stream.height = target_h
+    output_stream.pix_fmt = 'yuv420p'
+    
+    # Quality settings (CRF mode for good quality/size balance)
+    output_stream.options = {
+        'crf': '23',
+        'preset': 'medium',
+    }
+    
+    # Encode frames
+    for i, frame_array in enumerate(all_frames):
+        frame = av.VideoFrame.from_ndarray(frame_array, format='rgb24')
+        frame = frame.reformat(format='yuv420p')
+        
+        for packet in output_stream.encode(frame):
+            output_container.mux(packet)
+        
+        if (i + 1) % 100 == 0:
+            logger.info(f"  Encoded {i + 1}/{len(all_frames)} frames...")
+    
+    # Flush encoder
+    for packet in output_stream.encode():
+        output_container.mux(packet)
+    
+    output_container.close()
+    
+    logger.info("Video processing complete!")
+    logger.info(f"Output: {output_video_path}")
+    
+    # Update theme configuration
+    update_theme_config(theme_path, source_video_path, output_video_path)
+    
+    return True
 
-def update_theme_config(theme_path, source_path, processed_path):
+
+def update_theme_config(theme_path: Path, source_path: str, processed_path: str):
     """
     Update theme.yaml:
     - Set video_background.LOCAL_PATH to the processed video (relative to theme).
     - Set video_background.REMOTE_PATH to point to the processed filename.
     - Add/Update video_background.SOURCE_PATH to point to the original source.
     """
+    import yaml
+    
     theme_yaml_path = theme_path / "theme.yaml"
     
     try:
-        # Re-read raw lines to preserve comments (ruamel.yaml would be better but standard yaml is what we have)
-        # Using simple string replacement/parsing for now to avoid losing comments if we used yaml.dump
-        # OR just use yaml.dump if we accept reformatting. 
-        # Given the user cares about comments in the example, we should try to be careful.
-        # However, the project uses `yaml` (PyYAML) which doesn't preserve comments by default.
-        # Let's try to load, modify, and dump using the existing `config.load_yaml` but we need `yaml.dump`.
-        
-        # Checking if we should use a safer approach for this specific file editing. 
-        # For now, let's use the standard flow but warn about comment loss or try block updates?
-        # Actually, let's just append/modify the YAML object and dump it back. 
-        # If the user wants to preserve comments perfect, they might need a better parser later.
-        # But Requirement #7 implies we MUST update it.
-        
         with open(theme_yaml_path, 'r', encoding='utf-8') as f:
             content = yaml.safe_load(f)
-            
+        
         if 'video_background' not in content:
             content['video_background'] = {}
-            
-        # Calculate relative paths
-        # source_path might be absolute or relative. 
-        # We want to store it relative to theme if possible, or keep absolute.
-        # processed_path is definitely inside the theme folder or nearby.
         
+        # Calculate relative paths
         processed_rel = os.path.relpath(processed_path, theme_path).replace('\\', '/')
         source_rel = source_path
         if os.path.isabs(source_path):
             try:
                 source_rel = os.path.relpath(source_path, theme_path).replace('\\', '/')
             except ValueError:
-                pass # Keep absolute if on different drive
+                pass  # Keep absolute if on different drive
         
         content['video_background']['LOCAL_PATH'] = processed_rel
         content['video_background']['SOURCE_PATH'] = source_rel
@@ -189,7 +472,7 @@ def update_theme_config(theme_path, source_path, processed_path):
         # Write back
         with open(theme_yaml_path, 'w', encoding='utf-8') as f:
             yaml.dump(content, f, default_flow_style=False, sort_keys=False)
-            
+        
         logger.info(f"Updated {theme_yaml_path} with new video paths.")
         
     except Exception as e:
@@ -197,11 +480,15 @@ def update_theme_config(theme_path, source_path, processed_path):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Theme Video Processor")
+    parser = argparse.ArgumentParser(
+        description="Process videos for Turing Smart Screen themes using PyAV",
+        epilog="Example: python video_processor.py res/themes/MyTheme source.mp4 --output processed.mp4"
+    )
     parser.add_argument("theme_path", help="Path to the theme directory")
     parser.add_argument("video_path", help="Path to the source video file")
-    parser.add_argument("--output", help="Optional output path")
+    parser.add_argument("--output", help="Optional output path (default: source_processed.mp4)")
     
     args = parser.parse_args()
     
-    process_video(args.theme_path, args.video_path, args.output)
+    success = process_video(args.theme_path, args.video_path, args.output)
+    sys.exit(0 if success else 1)

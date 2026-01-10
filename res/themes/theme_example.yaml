@@ -39,6 +39,31 @@ video_background:
   # Optional: Local path to video file for automatic upload if not present on display
   # Path is relative to theme directory, or can be absolute
   LOCAL_PATH: res/videos/gunpla.mp4
+  
+  # === VIDEO PROCESSING OPTIONS ===
+  # These options are used by the video_processor.py tool to prepare videos for display.
+  
+  # Seamless loop crossfade duration (in seconds, float value, e.g., 1.5)
+  # Creates a crossfade transition between video end and beginning for seamless looping.
+  # Algorithm: Cuts the beginning segment (fade duration), appends to end, then blends.
+  # Set to 0 or omit to skip (use if source video is already a perfect loop).
+  LOOP_FADE_DURATION: 1.5
+  
+  # Rotation in degrees (0, 90, 180, 270)
+  # Applied after reading source video, before resize/crop.
+  ROTATE: 0
+  
+  # Flip video direction
+  # Options: horizontal, vertical, both
+  FLIP: horizontal
+  
+  # Trim video - starting point (mm:ss format)
+  # If not specified, starts from 00:00
+  START_OFFSET: 00:30
+  
+  # Trim video - duration from start point (mm:ss format)
+  # If not specified, uses source video's remaining duration after START_OFFSET.
+  DURATION: 01:30
 
 static_images:
   # Specify what static images we want to show on the display
@@ -89,76 +114,150 @@ static_text:
    ANCHOR: lt   # Check https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html
    
 ui_elements:
-  # This section defines custom UI elements to draw (Shapes, UI Text, Static Images).
-  # These are rendered as a transparent overlay.
+  # This section defines custom UI elements to draw (Shapes, UI Text, Static Images, Icons).
+  # These are rendered as a transparent overlay on top of the background or video.
+  # Elements are drawn sequentially, with later elements appearing on top of earlier ones (painter's algorithm).
   # If using Video Backgrounds, these can be baked into the video using the "video_processor.py" tool.
   
-  # Elements are drawn in the order they appear (bottom-to-top)
+  # === RECTANGLE EXAMPLE ===
+  # Shows all supported properties for rectangles including rounded corners, shear, outline, rotation, opacity, and shadow
   - type: rectangle
-    x: 10
-    y: 10
-    width: 100
-    height: 50
-    color: "255, 0, 0, 255"      # Red
-    radius: 10
-    outline_color: "255, 255, 255, 255"
-    outline_width: 2
+    x: 10                          # X coordinate (left edge)
+    y: 10                          # Y coordinate (top edge)
+    width: 100                     # Width in pixels
+    height: 50                     # Height in pixels
+    color: "255, 0, 0, 128"        # Fill color (RGBA: red with 50% alpha)
+    radius: 10                     # Corner radius for rounded corners
+    shear_left: 0                  # Left edge rotation in degrees (-89 to 89, 0 = no shear)
+    shear_right: 0                 # Right edge rotation in degrees (-89 to 89, 0 = no shear)
+    angle: 0                       # Rotation angle in degrees (clockwise)
+    opacity: 1.0                   # Opacity multiplier (0.0 to 1.0, multiplies with color alpha)
+    outline:                       # Outline configuration
+      width: 2                     # Outline thickness in pixels
+      color: "255, 255, 255, 255"  # Outline color (RGBA)
+      dash_array: [10, 5]          # Optional: dash pattern [draw_pixels, gap_pixels]
+      cap: round                   # Optional: 'butt' (default) or 'round' for dashed outlines
+    shadow:                        # Shadow configuration
+      blur: 5                      # Shadow blur radius
+      color: "0, 0, 0, 128"        # Shadow color (RGBA)
+      offset_x: 3                  # Shadow horizontal offset
+      offset_y: 3                  # Shadow vertical offset
       
-  - type: ellipse
-    x: 150
-    y: 10
-    width: 50
-    height: 50
-    color: "0, 0, 255, 128"      # Semi-transparent Blue
-    outline_color: "255, 255, 255, 255"
-    outline_width: 2
-    shadow:
-      blur: 5
-      color: "0, 0, 0, 255"
-      offset_x: 2
-      offset_y: 2
+  # === CIRCLE EXAMPLE ===
+  # Shows all supported properties for circles including outline, rotation, opacity, and shadow
+  - type: circle
+    x: 150                         # X coordinate (center)
+    y: 40                          # Y coordinate (center)
+    radius: 30                     # Radius in pixels
+    color: "0, 0, 255, 200"        # Fill color (RGBA: blue with ~78% alpha)
+    angle: 0                       # Rotation (not visually apparent for perfect circles)
+    opacity: 0.9                   # Opacity multiplier
+    outline:                       # Outline configuration
+      width: 3                     # Outline thickness
+      color: "255, 255, 255, 255"  # Outline color
+    shadow:                        # Shadow configuration
+      blur: 10                     # Shadow blur radius
+      color: "0, 0, 0, 150"        # Shadow color
+      offset_x: 5                  # Shadow horizontal offset
+      offset_y: 5                  # Shadow vertical offset
+
+  # === TRIANGLE EXAMPLE ===
+  # Shows all supported properties for triangles including corner radius, outline, rotation, opacity, and shadow
+  - type: triangle
+    x1: 220                        # Point 1 X coordinate
+    y1: 20                         # Point 1 Y coordinate
+    x2: 250                        # Point 2 X coordinate
+    y2: 20                         # Point 2 Y coordinate
+    x3: 235                        # Point 3 X coordinate
+    y3: 50                         # Point 3 Y coordinate
+    radius: 5                      # Corner radius for smooth corners
+    color: "255, 165, 0, 255"      # Fill color (RGBA: orange)
+    angle: 0                       # Rotation angle in degrees
+    opacity: 1.0                   # Opacity multiplier
+    outline:                       # Outline configuration
+      width: 2                     # Outline thickness
+      color: "255, 255, 255, 255"  # Outline color
+    shadow:                        # Shadow configuration
+      blur: 4                      # Shadow blur radius
+      color: "0, 0, 0, 120"        # Shadow color
+      offset_x: 3                  # Shadow horizontal offset
+      offset_y: 3                  # Shadow vertical offset
       
+  # === LINE EXAMPLE ===
+  # Shows all supported properties for lines including dashed styles, end caps, outline, rotation, opacity, and shadow
   - type: line
-    x: 10
-    y: 80
-    x2: 200
-    y2: 80
-    width: 5
-    color: "0, 255, 0, 255"
-    outline_color: "0, 0, 0, 255"
-    outline_width: 1
-    style: dotted
-    end_cap: round
-    shadow:
-      blur: 2
-      color: "0, 0, 0, 100"
-      offset_x: 3
-      offset_y: 3
+    x: 10                          # Start X coordinate
+    y: 80                          # Start Y coordinate
+    x2: 200                        # End X coordinate
+    y2: 80                         # End Y coordinate
+    width: 5                       # Line thickness in pixels
+    color: "0, 255, 0, 255"        # Line color (RGBA: green)
+    end_cap: round                 # Line ending: 'butt' (default) or 'round'
+    angle: 0                       # Rotation applied from (x, y)
+    opacity: 1.0                   # Opacity multiplier
+    outline:                       # Outline configuration
+      width: 1                     # Outline thickness around the line
+      color: "0, 0, 0, 255"        # Outline color
+      style: dashed                # Optional: 'dotted' or 'dashed' preset styles
+    shadow:                        # Shadow configuration
+      blur: 3                      # Shadow blur radius
+      color: "0, 0, 0, 100"        # Shadow color
+      offset_x: 2                  # Shadow horizontal offset
+      offset_y: 2                  # Shadow vertical offset
 
-  - type: image
-    path: "logo.png"
-    x: 250
-    y: 10
-    scale: 0.5            # 50% size
-    opacity: 0.8          # 80% opacity
-    shadow:
-      blur: 5
-      color: "0, 0, 0, 128"
-      offset_x: 5
-      offset_y: 5
-
+  # === TEXT EXAMPLE ===
+  # Shows all supported properties for text including font, rotation, opacity, and shadow
   - type: text
-    text: "UI OVERLAY TEXT"
-    x: 50
-    y: 100
-    font_size: 20
-    color: "255, 255, 255, 255"
-    angle: -10
-    shadow:
-      blur: 2
-      color: "0, 0, 0, 255"
-      offset_x: 2
-      offset_y: 2
+    text: "UI OVERLAY TEXT"        # The text string to display
+    x: 50                          # X coordinate
+    y: 100                         # Y coordinate
+    font: "roboto/Roboto-Bold.ttf" # Font file path (relative to res/fonts/)
+    font_size: 20                  # Font size in pixels
+    color: "255, 255, 255, 255"    # Text color (RGBA: white)
+    angle: 0                       # Rotation angle in degrees
+    opacity: 1.0                   # Opacity multiplier
+    shadow:                        # Shadow configuration
+      blur: 4                      # Shadow blur radius
+      color: "0, 0, 0, 180"        # Shadow color
+      offset_x: 2                  # Shadow horizontal offset
+      offset_y: 2                  # Shadow vertical offset
+
+  # === ICON EXAMPLE (Font Awesome) ===
+  # Shows all supported properties for icons including automatic Font Awesome URL resolution, size, color, rotation, opacity, and shadow
+  - type: icon
+    icon: "https://fontawesome.com/icons/microchip?f=classic&s=solid"  # Font Awesome URL (auto-resolved)
+    # icon: "f2db"                 # Alternative: Direct hex code
+    # link: "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/webfonts/fa-solid-900.ttf"  # Optional: Direct font URL
+    x: 220                         # X coordinate
+    y: 100                         # Y coordinate
+    size: 30                       # Icon size in pixels
+    scale: 1.0                     # Scale multiplier (default 1.0)
+    color: "70, 200, 130, 255"     # Icon color (RGBA: green)
+    angle: 0                       # Rotation angle in degrees
+    opacity: 1.0                   # Opacity multiplier
+    shadow:                        # Shadow configuration
+      blur: 3                      # Shadow blur radius
+      color: "0, 0, 0, 150"        # Shadow color
+      offset_x: 2                  # Shadow horizontal offset
+      offset_y: 2                  # Shadow vertical offset
+
+  # === IMAGE EXAMPLE ===
+  # Shows all supported properties for images including scale, outline, rotation, opacity, and shadow
+  - type: image
+    path: "logo.png"               # Image file path (relative to theme directory)
+    x: 10                          # X coordinate
+    y: 140                         # Y coordinate
+    scale: 0.5                     # Scaling factor (1.0 = original size, 0.5 = 50% size)
+    angle: 0                       # Rotation angle in degrees
+    opacity: 0.9                   # Opacity multiplier (0.0 to 1.0)
+    outline:                       # Outline (stroke) configuration
+      width: 2                     # Outline thickness
+      color: "255, 255, 255, 255"  # Outline color
+    shadow:                        # Shadow configuration
+      blur: 5                      # Shadow blur radius
+      color: "0, 0, 0, 100"        # Shadow color
+      offset_x: 3                  # Shadow horizontal offset
+      offset_y: 3                  # Shadow vertical offset
 
 STAT:
   CPU:

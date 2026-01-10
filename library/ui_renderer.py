@@ -5,6 +5,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageColor, ImageFont, ImageChops
 
 from library.log import logger
 from library import config # We need config to access FONTS_DIR if needed or pass it in
+from library.font_manager import font_manager
 
 class UiRenderer:
     def __init__(self, theme_data, theme_path):
@@ -167,6 +168,156 @@ class UiRenderer:
         
         return final_img, padding, padding
 
+    def _get_intersection(self, p1, p2, p3, p4):
+        """Find intersection of two lines: p1-p2 and p3-p4."""
+        x1, y1 = p1
+        x2, y2 = p2
+        x3, y3 = p3
+        x4, y4 = p4
+        
+        denom = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1)
+        if abs(denom) < 1e-9:
+            return None # Parallel
+        
+        ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denom
+        return (x1 + ua * (x2 - x1), y1 + ua * (y2 - y1))
+
+    def _normalize_winding(self, vertices):
+        """Ensure convex polygon vertices are in Clockwise (CW) order (Y-down coordinates)."""
+        # Shoelace formula: sum (x2-x1)(y2+y1). 
+        # Area < 0 is CW, Area > 0 is CCW in Y-down screen coordinates.
+        area = 0
+        for i in range(len(vertices)):
+            p1 = vertices[i]
+            p2 = vertices[(i + 1) % len(vertices)]
+            area += (p2[0] - p1[0]) * (p2[1] + p1[1])
+        if area > 0:
+            return list(reversed(vertices))
+        return list(vertices)
+
+    def _get_rounded_polygon_path(self, vertices, radius):
+        """Calculate high-precision path for a rounded convex polygon."""
+        num = len(vertices)
+        if radius <= 0: return vertices
+
+        # Normalize to CW
+        vertices = self._normalize_winding(vertices)
+        
+        # Calculate edges and inward normals
+        normals = []
+        edges = []
+        lengths = []
+        for i in range(num):
+            p1 = vertices[i]
+            p2 = vertices[(i + 1) % num]
+            dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+            l = math.hypot(dx, dy)
+            if l == 0: continue
+            edges.append((p1, p2))
+            normals.append((-dy/l, dx/l))
+            lengths.append(l)
+        
+        num = len(edges)
+        if num < 3: return vertices
+
+        # Calculate arc centers by intersecting shifted edges
+        # We also calculate the maximum safe radius for each corner to prevent overlap
+        centers = []
+        for i in range(num):
+            n_prev = normals[(i - 1 + num) % num]
+            n_curr = normals[i]
+            e_prev = edges[(i - 1 + num) % num]
+            e_curr = edges[i]
+            
+            # Interior angle theta
+            # dot(n_prev, n_curr) = cos(alpha) where alpha is exterior angle. alpha = 180 - theta.
+            dot = max(-1, min(1, n_prev[0]*n_curr[0] + n_prev[1]*n_curr[1]))
+            alpha = math.acos(dot)
+            theta = math.pi - alpha
+            
+            # Max radius for this corner such that tangent distance <= half of adjacent edges
+            # T = R / tan(theta/2)
+            half_min_edge = min(lengths[(i-1+num)%num], lengths[i]) / 2.0
+            r_limit = half_min_edge * math.tan(theta/2.0)
+            corner_radius = min(radius, r_limit)
+            
+            # Shifted lines
+            s_prev_1 = (e_prev[0][0] + n_prev[0] * corner_radius, e_prev[0][1] + n_prev[1] * corner_radius)
+            s_prev_2 = (e_prev[1][0] + n_prev[0] * corner_radius, e_prev[1][1] + n_prev[1] * corner_radius)
+            s_curr_1 = (e_curr[0][0] + n_curr[0] * corner_radius, e_curr[0][1] + n_curr[1] * corner_radius)
+            s_curr_2 = (e_curr[1][0] + n_curr[0] * corner_radius, e_curr[1][1] + n_curr[1] * corner_radius)
+            
+            center = self._get_intersection(s_prev_1, s_prev_2, s_curr_1, s_curr_2)
+            centers.append((center if center else e_curr[0], corner_radius))
+            
+        poly_points = []
+        for i in range(num):
+            center, r = centers[i]
+            n_prev = normals[(i - 1 + num) % num]
+            n_curr = normals[i]
+            
+            start_angle = math.atan2(-n_prev[1], -n_prev[0])
+            end_angle = math.atan2(-n_curr[1], -n_curr[0])
+            if end_angle < start_angle: end_angle += 2 * math.pi
+            
+            steps = 12
+            for s in range(steps + 1):
+                angle = start_angle + (end_angle - start_angle) * (s / steps)
+                poly_points.append((center[0] + math.cos(angle) * r, center[1] + math.sin(angle) * r))
+        return poly_points
+
+    def _draw_dashed_path(self, draw, points, width, color, dash_array, closed=True):
+        """Draw high-quality dashed segments along a path."""
+        if not points: return
+        pts = list(points)
+        if closed: pts.append(pts[0])
+            
+        dash_len, gap_len = dash_array[0], dash_array[1]
+        current_offset = 0
+        is_dash = True
+        dash_pts = []
+        
+        for i in range(len(pts) - 1):
+            p1, p2 = pts[i], pts[i+1]
+            dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+            dist = math.hypot(dx, dy)
+            if dist == 0: continue
+            
+            vx, vy = dx / dist, dy / dist
+            rem = dist
+            seg_off = 0
+            
+            while rem > 0:
+                target = dash_len if is_dash else gap_len
+                space = target - current_offset
+                step = min(rem, space)
+                
+                if is_dash:
+                    if not dash_pts: dash_pts.append((p1[0] + vx * seg_off, p1[1] + vy * seg_off))
+                    dash_pts.append((p1[0] + vx * (seg_off + step), p1[1] + vy * (seg_off + step)))
+                
+                seg_off += step
+                current_offset += step
+                rem -= step
+                
+                if current_offset >= target - 1e-6:
+                    if is_dash and len(dash_pts) > 1:
+                        draw.line(dash_pts, fill=color, width=width, joint='curve')
+                    dash_pts, current_offset, is_dash = [], 0, not is_dash
+
+        if is_dash and len(dash_pts) > 1:
+            draw.line(dash_pts, fill=color, width=width, joint='curve')
+
+    def _draw_rounded_polygon(self, draw, vertices, radius, fill=None, outline=None, width=1, dash_array=None):
+        """Draw a convex polygon with rounded corners."""
+        poly_points = self._get_rounded_polygon_path(vertices, radius)
+        if fill: draw.polygon(poly_points, fill=fill)
+        if outline and width > 0:
+            if dash_array:
+                self._draw_dashed_path(draw, poly_points, width, outline, dash_array, closed=True)
+            else:
+                draw.line(poly_points + [poly_points[0]], fill=outline, width=width, joint='curve')
+
     def _draw_dashed_line(self, draw, p1, p2, width, color, dash_array, cap='butt'):
         """
         Draw a dashed line between p1 and p2.
@@ -244,8 +395,11 @@ class UiRenderer:
                     'cap': shape_config.get('end_cap', 'butt') # Inherit main cap for legacy lines
                 }
         
+        # Supersampling factor for anti-aliasing (applied to all shapes)
+        sampling = 4
+        
         outline_color_raw = outline_cfg.get('color')
-        outline_width = outline_cfg.get('width', 0)
+        outline_width = outline_cfg.get('width', 0) or 0
         resolved_outline = self._resolve_color(outline_color_raw) if outline_color_raw else None
         
         # Dash support
@@ -255,6 +409,7 @@ class UiRenderer:
             if style == 'dotted': dash_array = [2, 2] 
             elif style == 'dashed': dash_array = [10, 5]
             
+        s_dash_array = [v * sampling for v in dash_array] if dash_array else None
         outline_cap = outline_cfg.get('cap', 'butt')
         
         pad = math.ceil(outline_width / 2) + 1
@@ -266,20 +421,26 @@ class UiRenderer:
             lw = abs(x2 - x)
             lh = abs(y2 - y)
             
-            canvas_w = lw + outline_width + 20 
-            canvas_h = lh + outline_width + 20
-            img = Image.new('RGBA', (int(canvas_w), int(canvas_h)), (0, 0, 0, 0))
+            # Apply supersampling to line
+            s_lw = lw * sampling
+            s_lh = lh * sampling
+            s_w = w * sampling  # Line width
+            s_outline = outline_width * sampling
+            
+            s_canvas_w = s_lw + s_outline + 20 * sampling
+            s_canvas_h = s_lh + s_outline + 20 * sampling
+            
+            img = Image.new('RGBA', (int(s_canvas_w), int(s_canvas_h)), (0, 0, 0, 0))
             d = ImageDraw.Draw(img)
             
-            offset_x = lx - 10
-            offset_y = ly - 10
+            # Scale offset and points
+            s_offset_x = (lx - 10) * sampling
+            s_offset_y = (ly - 10) * sampling
             
-            p1 = (x - offset_x, y - offset_y)
-            p2 = (x2 - offset_x, y2 - offset_y)
+            s_p1 = (x * sampling - s_offset_x, y * sampling - s_offset_y)
+            s_p2 = (x2 * sampling - s_offset_x, y2 * sampling - s_offset_y)
             
             # Line can have its own end_cap property (legacy) or outline.cap (new)
-            # Prioritize 'end_cap' for the MAIN line if explicit, else outline config?
-            # Actually line usually has "end_cap".
             joint = shape_config.get('end_cap', outline_cap)
 
             # Helper to draw line (solid or dashed)
@@ -295,21 +456,104 @@ class UiRenderer:
             
             # Draw Outline
             if resolved_outline:
-                # Outline width adds to main width
-                draw_the_line(d, p1, p2, w + (outline_width*2), resolved_outline, dash_array, outline_cap)
+                draw_the_line(d, s_p1, s_p2, s_w + (s_outline*2), resolved_outline, s_dash_array, outline_cap)
 
             # Draw Main
-            draw_the_line(d, p1, p2, w, fill_color, dash_array, joint)
+            draw_the_line(d, s_p1, s_p2, s_w, fill_color, s_dash_array, joint)
+            
+            # Resize down
+            final_w = int(s_canvas_w // sampling)
+            final_h = int(s_canvas_h // sampling)
+            img = img.resize((final_w, final_h), Image.Resampling.LANCZOS)
+            
+            offset_x = lx - 10
+            offset_y = ly - 10
                 
             return img, (offset_x, offset_y)
-            
-        # Supersampling factor for anti-aliasing (Rect/Ellipse)
-        sampling = 4
         
         if shape_type == 'rectangle':
-            radius = shape_config.get('radius', 0) * sampling
+            # Check for shear (parallelogram effect)
+            shear_left = shape_config.get('shear_left', 0)
+            shear_right = shape_config.get('shear_right', 0)
             
-            # Supersample standard shapes & Dashed shapes manually
+            # Legacy 'shear' applies to both edges (creates classic parallelogram)
+            legacy_shear = shape_config.get('shear', 0)
+            if legacy_shear != 0 and shear_left == 0 and shear_right == 0:
+                shear_left = legacy_shear
+                shear_right = legacy_shear # Both rotate same direction for parallelogram
+            
+            # Clamp to valid range (-89 to 89 degrees)
+            shear_left = max(-89, min(89, shear_left))
+            shear_right = max(-89, min(89, shear_right))
+            
+            if shear_left != 0 or shear_right != 0:
+                # Shear rotates an edge around its CENTER (midpoint at h/2).
+                # offset = (half_h) * tan(angle)
+                # target: Positive angle = Clockwise rotation for BOTH edges.
+                # Left edge CW: top moves RIGHT (+), bottom moves LEFT (-)
+                # Right edge CW: top moves RIGHT (+), bottom moves LEFT (-)
+                
+                half_h = h / 2
+                
+                # Displacement at top/bottom from center
+                left_offset = half_h * math.tan(math.radians(shear_left))
+                right_offset = half_h * math.tan(math.radians(shear_right))
+                
+                # Calculate bounding box - need extra width for displaced corners
+                # X-coordinates relative to origin (top-left of un-sheared rect):
+                # TL.x = 0 + left_offset (positive angle -> moves right)
+                # BL.x = 0 - left_offset (positive angle -> moves left)
+                # TR.x = w + right_offset (positive angle -> moves right)
+                # BR.x = w - right_offset (positive angle -> moves left)
+                
+                xs = [left_offset, -left_offset, w + right_offset, w - right_offset]
+                min_x = min(xs)
+                max_x = max(xs)
+                
+                extra_left = max(0, -min_x)
+                total_w = max_x + extra_left + pad * 2
+                total_h = h + pad * 2
+                
+                # Supersampling
+                s_total_w = total_w * sampling
+                s_total_h = total_h * sampling
+                s_w = w * sampling
+                s_h = h * sampling
+                s_outline = outline_width * sampling
+                s_pad = pad * sampling
+                s_extra_left = extra_left * sampling
+                
+                img = Image.new('RGBA', (int(s_total_w), int(s_total_h)), (0, 0, 0, 0))
+                d = ImageDraw.Draw(img)
+                
+                # Scale offsets
+                s_left_off = left_offset * sampling
+                s_right_off = right_offset * sampling
+                
+                # Base position: origin of rectangle in canvas coords
+                origin_x = s_pad + s_extra_left
+                origin_y = s_pad
+                
+                tl = (origin_x + s_left_off, origin_y)
+                tr = (origin_x + s_w + s_right_off, origin_y)
+                br = (origin_x + s_w - s_right_off, origin_y + s_h)
+                bl = (origin_x - s_left_off, origin_y + s_h)
+                
+                s_radius = (shape_config.get('radius', 0) or 0) * sampling
+                
+                # Draw using the new helper which handles both fill and (solid/dashed) outline
+                self._draw_rounded_polygon(d, [tl, tr, br, bl], s_radius, 
+                                         fill=fill_color if fill_color[3] > 0 else None, 
+                                         outline=resolved_outline, 
+                                         width=int(s_outline),
+                                         dash_array=s_dash_array if dash_array else None)
+                
+                img = img.resize((int(s_total_w // sampling), int(s_total_h // sampling)), Image.Resampling.LANCZOS)
+                return img, (x - pad - extra_left, y - pad)
+            
+            # Standard rectangle (no shear)
+            s_radius = (shape_config.get('radius', 0) or 0) * sampling
+            
             canvas_w = (w + pad * 2) * sampling
             canvas_h = (h + pad * 2) * sampling
             
@@ -321,44 +565,19 @@ class UiRenderer:
             s_h = h * sampling
             s_outline = outline_width * sampling
             
-            bounds = [s_pad, s_pad, s_pad + s_w, s_pad + s_h]
+            # Vertices for a standard rectangle
+            tl = (s_pad, s_pad)
+            tr = (s_pad + s_w, s_pad)
+            br = (s_pad + s_w, s_pad + s_h)
+            bl = (s_pad, s_pad + s_h)
 
-            if dash_array:
-                # Manual dashed drawing on high-res canvas
-                # We need to scale dash array
-                s_dash_array = [v * sampling for v in dash_array]
-                
-                # Fill first
-                if fill_color[3] > 0:
-                     d.rounded_rectangle(bounds, radius=radius, fill=fill_color, width=0)
-                
-                if resolved_outline:
-                     # Draw 4 dashed lines. Logic for rounded corners with dashes is still complex.
-                     # But for now, user is accepting "rectangle" dashes. 
-                     # Using simple lines for the rectangle outline on high res canvas.
-                     # NOTE: This ignores Radius for the OUTLINE if it is dashed. 
-                     # This is a known limitation unless we implement path walking.
-                     # However, the user's screenshot showed rounded corners for dashes?
-                     # No, the screenshot showed dashes following the rect? 
-                     # Actually, standard PIL/my logic draws 4 lines.
-                     # If the user wants rounded dashed corners, that's much harder.
-                     # But at least let's fix the SIZE of the dashes.
-                     
-                     # Simple 4 lines approach for high-res
-                     pts = [
-                         ((s_pad, s_pad), (s_pad+s_w, s_pad)),
-                         ((s_pad+s_w, s_pad), (s_pad+s_w, s_pad+s_h)),
-                         ((s_pad+s_w, s_pad+s_h), (s_pad, s_pad+s_h)),
-                         ((s_pad, s_pad+s_h), (s_pad, s_pad))
-                     ]
-
-                     for s, e in pts:
-                         self._draw_dashed_line(d, s, e, s_outline, resolved_outline, s_dash_array, outline_cap)
-
-            else:
-                 d.rounded_rectangle(bounds, radius=radius, fill=fill_color, outline=resolved_outline, width=s_outline)
+            # Use the unified rounded polygon drawer (handles fill, rounding, and dashes)
+            self._draw_rounded_polygon(d, [tl, tr, br, bl], s_radius, 
+                                     fill=fill_color if fill_color[3] > 0 else None, 
+                                     outline=resolved_outline, 
+                                     width=int(s_outline),
+                                     dash_array=s_dash_array if dash_array else None)
             
-            # Resize down
             img = img.resize((int(canvas_w // sampling), int(canvas_h // sampling)), Image.Resampling.LANCZOS)
             return img, (x - pad, y - pad)
 
@@ -381,29 +600,55 @@ class UiRenderer:
              img = img.resize((int(canvas_w // sampling), int(canvas_h // sampling)), Image.Resampling.LANCZOS)
              return img, (x - pad, y - pad)
 
-        # Fallback for complex dashed rects
-        canvas_w = w + pad * 2
-        canvas_h = h + pad * 2
-        img = Image.new('RGBA', (int(canvas_w), int(canvas_h)), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        bounds = [pad, pad, pad + w, pad + h]
-        
-        if shape_type == 'rectangle' and dash_array:
-            if fill_color[3] > 0:
-                 radius = shape_config.get('radius', 0)
-                 d.rounded_rectangle(bounds, radius=radius, fill=fill_color, width=0)
+        elif shape_type == 'triangle':
+            # Triangle defined by 3 points
+            x1, y1 = shape_config.get('x1', x), shape_config.get('y1', y)
+            x2, y2 = shape_config.get('x2', x), shape_config.get('y2', y)
+            x3, y3 = shape_config.get('x3', x), shape_config.get('y3', y)
             
-            if resolved_outline:
-                 pts = [
-                     ((pad, pad), (pad+w, pad)),
-                     ((pad+w, pad), (pad+w, pad+h)),
-                     ((pad+w, pad+h), (pad, pad+h)),
-                     ((pad, pad+h), (pad, pad))
-                 ]
-                 for s, e in pts:
-                     self._draw_dashed_line(d, s, e, outline_width, resolved_outline, dash_array, outline_cap)
+            # Calculate bounding box
+            min_x = min(x1, x2, x3)
+            min_y = min(y1, y2, y3)
+            max_x = max(x1, x2, x3)
+            max_y = max(y1, y2, y3)
+            
+            tri_w = max_x - min_x
+            tri_h = max_y - min_y
+            
+            # Supersampling
+            s_outline = outline_width * sampling
+            s_tri_w = tri_w * sampling
+            s_tri_h = tri_h * sampling
+            s_pad = pad * sampling
+            
+            canvas_w = (tri_w + pad * 2) * sampling
+            canvas_h = (tri_h + pad * 2) * sampling
+            
+            img = Image.new('RGBA', (int(canvas_w), int(canvas_h)), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            
+            # Scale and offset points
+            def scale_pt(px, py):
+                return ((px - min_x) * sampling + s_pad, (py - min_y) * sampling + s_pad)
+            
+            s_p1 = scale_pt(x1, y1)
+            s_p2 = scale_pt(x2, y2)
+            s_p3 = scale_pt(x3, y3)
+            
+            s_radius = (shape_config.get('radius', 0) or 0) * sampling
+            
+            # Draw using the new helper which handles fill, rounding, and (solid/dashed) outline
+            self._draw_rounded_polygon(d, [s_p1, s_p2, s_p3], s_radius, 
+                                     fill=fill_color if fill_color[3] > 0 else None, 
+                                     outline=resolved_outline, 
+                                     width=int(s_outline),
+                                     dash_array=s_dash_array if dash_array else None)
+            
+            img = img.resize((int(canvas_w // sampling), int(canvas_h // sampling)), Image.Resampling.LANCZOS)
+            return img, (min_x - pad, min_y - pad)
 
-        return img, (x - pad, y - pad)
+        # Fallback for unknown types
+        return None, (0, 0)
 
     def draw_text_to_image(self, text_config):
         """Render text to an RGBA image."""
@@ -477,6 +722,82 @@ class UiRenderer:
         
         return img, (x, y)
 
+    def draw_icon_to_image(self, icon_config):
+        """Render an icon (from local, remote font, or auto-resolved FA URL) to an RGBA image."""
+        icon_val = icon_config.get('icon', '')
+        if not icon_val: return None, (0,0)
+        
+        # 1. Resolve Unicode and Font Link
+        # If user provides a direct link in icon_config, it takes precedence over auto-resolved link
+        auto_unicode, auto_link = font_manager.resolve_icon_metadata(icon_val)
+        font_link = icon_config.get('link') or auto_link
+        
+        # 2. Determine text character
+        # If lookup failed for a URL, definitely don't render the URL itself
+        if not auto_unicode and ('http://' in icon_val or 'https://' in icon_val):
+            logger.warning(f"Could not resolve icon from URL: {icon_val}")
+            return None, (0,0)
+            
+        final_hex = auto_unicode or icon_val
+        if len(final_hex) >= 4 and all(c in '0123456789abcdefABCDEF' for c in final_hex):
+            try:
+                text = chr(int(final_hex, 16))
+            except Exception:
+                text = final_hex
+        else:
+            text = final_hex
+
+        # 3. Font resolution
+        if font_link:
+            font_path = font_manager.get_font_path(font_link)
+        else:
+            # Fallback
+            font_path = os.path.join(config.FONTS_DIR, 'fa-solid-900.ttf')
+            if not os.path.exists(font_path):
+                font_path = os.path.join(config.FONTS_DIR, 'roboto/Roboto-Regular.ttf')
+
+        size = icon_config.get('size', icon_config.get('font_size', 40))
+        color = self._resolve_color(icon_config.get('color', 'white'), icon_config.get('alpha'))
+        
+        try:
+            font = ImageFont.truetype(font_path, size)
+        except OSError:
+            logger.warning(f"Could not load icon font {font_path}")
+            return None, (0,0)
+
+        # Precise BBox calculation
+        dummy = Image.new('RGBA', (1,1))
+        d_dummy = ImageDraw.Draw(dummy)
+        bbox = d_dummy.textbbox((0, 0), text, font=font)
+        
+        w = bbox[2] - bbox[0]
+        h = bbox[3] - bbox[1]
+        
+        # Add padding
+        pad = int(size * 0.1) + 5
+        img = Image.new('RGBA', (int(w + pad*2), int(h + pad*2)), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        
+        # Shift to fit in padded canvas
+        d.text((pad - bbox[0], pad - bbox[1]), text, font=font, fill=color)
+        
+        bbox_final = img.getbbox()
+        if bbox_final:
+            # Align top-left padding
+            img = img.crop(bbox_final)
+            
+        # Scale support
+        scale = icon_config.get('scale', 1.0)
+        if scale != 1.0:
+            new_w = int(img.width * scale)
+            new_h = int(img.height * scale)
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            
+        x = icon_config.get('x', 0)
+        y = icon_config.get('y', 0)
+        
+        return img, (x, y)
+
     def generate_overlay(self):
         overlay = Image.new('RGBA', (self.width, self.height), (0, 0, 0, 0))
         ui_elements = self.theme_data.get('ui_elements', [])
@@ -515,8 +836,8 @@ class UiRenderer:
                 a = a.point(lambda p: int(p * opacity))
                 img = Image.merge('RGBA', (r, g, b, a))
 
-            # Rotation
-            angle = config_item.get('angle', 0)
+            # Rotation (supports both 'angle' and 'rotation' property names)
+            angle = config_item.get('angle', config_item.get('rotation', 0))
             if angle != 0:
                 cx = x + img.width / 2
                 cy = y + img.height / 2
@@ -537,12 +858,16 @@ class UiRenderer:
         for config_item in ui_elements:
             elem_type = config_item.get('type')
             
-            if elem_type in ('rectangle', 'ellipse', 'circle', 'line'):
+            if elem_type in ('rectangle', 'ellipse', 'circle', 'line', 'triangle'):
                 img, (x, y) = self.draw_shape_to_image(config_item)
                 process_element(img, x, y, config_item)
                 
             elif elem_type == 'text':
                 img, (x, y) = self.draw_text_to_image(config_item)
+                process_element(img, x, y, config_item)
+                
+            elif elem_type == 'icon':
+                img, (x, y) = self.draw_icon_to_image(config_item)
                 process_element(img, x, y, config_item)
                 
             elif elem_type == 'image':

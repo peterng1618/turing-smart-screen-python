@@ -32,6 +32,7 @@ import platform
 import subprocess
 import sys
 import time
+import gc
 
 try:
     import tkinter
@@ -95,11 +96,11 @@ def refresh_theme():
     video_config = config.THEME_DATA.get('video_background', {})
     if video_config.get('ENABLE', False):
         # Extract frame #10 from video for preview
-        local_path = video_config.get('LOCAL_PATH')
+        # Prioritize SOURCE_PATH (raw video) over LOCAL_PATH (possibly baked with UI)
+        local_path = video_config.get('SOURCE_PATH') or video_config.get('LOCAL_PATH')
         if local_path:
             try:
                 import cv2
-                from PIL import Image
                 
                 # Resolve video path
                 if not os.path.isabs(local_path):
@@ -153,7 +154,6 @@ def refresh_theme():
         logger.debug(f"Cleared display.lcd.image_cache ({len(display.lcd.image_cache)} items before clear)")
     
     # Also clear PIL's cache as a safety measure
-    import gc
     if hasattr(Image, '_image_cache'):
         Image._image_cache.clear()
     gc.collect()

@@ -268,14 +268,17 @@ shadow:
 #### 1. Rectangle
 Draws a rectangle, optionally with rounded corners.
 
-| Property  | Type    | Description                       |
-| :-------- | :------ | :-------------------------------- |
-| `type`    | String  | Must be `rectangle`               |
-| `width`   | Integer | Width of the rectangle            |
-| `height`  | Integer | Height of the rectangle           |
-| `color`   | String  | Fill color (RGBA: "r,g,b,a")      |
-| `radius`  | Integer | Corner radius for rounded corners |
-| `outline` | Object  | Outline configuration (see below) |
+| Property      | Type    | Description                                |
+| :------------ | :------ | :----------------------------------------- |
+| `type`        | String  | Must be `rectangle`                        |
+| `width`       | Integer | Width of the rectangle                     |
+| `height`      | Integer | Height of the rectangle                    |
+| `color`       | String  | Fill color (RGBA: "r,g,b,a")               |
+| `radius`      | Integer | Corner radius for rounded corners          |
+| `shear_left`  | Number  | Left edge rotation in degrees (-89 to 89)  |
+| `shear_right` | Number  | Right edge rotation in degrees (-89 to 89) |
+| `shear`       | Number  | Legacy shorthand for both left and right   |
+| `outline`     | Object  | Outline configuration (see below)          |
 
 **Outline Configuration:**
 ```yaml
@@ -286,7 +289,7 @@ outline:
   cap: round           # Optional: 'butt' (default) or 'round'
 ```
 > [!NOTE]
-> When using `dash_array` with a rounded rectangle, the outline will effectively be drawn as a square (sharp corners) due to current rendering limitations. Solid outlines respect the corner radius.
+> Dashed outlines (using `dash_array`) fully support rounded corners (`radius`) on any shape type.
 
 **Example:**
 ```yaml
@@ -297,13 +300,15 @@ outline:
     height: 100
     color: "255, 0, 0, 128"
     radius: 15
+    shear_left: 10
+    shear_right: 10
+    angle: 15
+    opacity: 0.9
     outline:
       width: 4
       color: "255, 255, 255, 255"
       dash_array: [5, 10]
       cap: round
-    angle: 15
-    opacity: 0.9
     shadow:
       blur: 5
       color: "0, 0, 0, 128"
@@ -342,7 +347,36 @@ Draws a circle or ellipse.
       offset_y: 5
 ```
 
-#### 3. Line
+#### 3. Triangle
+Draws a triangle defined by three points.
+
+| Property   | Type    | Description                      |
+| :--------- | :------ | :------------------------------- |
+| `type`     | String  | Must be `triangle`               |
+| `x1`, `y1` | Integer | Point 1 (Relative or Absolute)   |
+| `x2`, `y2` | Integer | Point 2                          |
+| `x3`, `y3` | Integer | Point 3                          |
+| `radius`   | Integer | Corner radius for smooth corners |
+| `color`    | String  | Fill color (RGBA)                |
+| `outline`  | Object  | Outline configuration            |
+
+**Example:**
+```yaml
+  - type: triangle
+    x1: 50
+    y1: 50
+    x2: 150
+    y2: 50
+    x3: 100
+    y3: 150
+    radius: 10
+    color: "255, 0, 0, 255"
+    outline:
+      width: 2
+      color: "255, 255, 255"
+```
+
+#### 4. Line
 Draws a line between two points.
 
 | Property  | Type    | Description                              |
@@ -407,6 +441,44 @@ Draws text using a TrueType font.
       offset_y: 2
 ```
 
+#### 5. Icon
+Draws a vector icon. Supports automatic resolution of Font Awesome names and URLs.
+
+| Property  | Type    | Description                                  |
+| :-------- | :------ | :------------------------------------------- |
+| `type`    | String  | Must be `icon`                               |
+| `icon`    | String  | Hex code (`f015`), Name (`house`), or FA URL |
+| `link`    | String  | Optional: Direct URL to `.ttf` font file     |
+| `size`    | Integer | Icon size in pixels                          |
+| `scale`   | Float   | Scale multiplier (default 1.0)               |
+| `color`   | String  | Icon color (RGBA)                            |
+| `angle`   | Number  | Rotation angle                               |
+| `opacity` | Float   | Opacity 0.0 to 1.0                           |
+| `shadow`  | Object  | Shadow configuration                         |
+
+> [!TIP]
+> **Automatic Resolution**: You can simply paste a Font Awesome icon URL (e.g., `https://fontawesome.com/icons/angrycreative?f=brands`) into the `icon` property. The system will automatically download the correct font and resolve the unicode hex for you.
+
+**Example (Automatic):**
+```yaml
+  - type: icon
+    icon: "https://fontawesome.com/icons/angrycreative?f=brands"
+    x: 50
+    y: 50
+    size: 48
+```
+
+**Example (Manual):**
+```yaml
+  - type: icon
+    icon: "f015"
+    link: "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/webfonts/fa-solid-900.ttf"
+    x: 50
+    y: 50
+    size: 48
+    color: "70, 200, 130, 255"
+```
+
 #### 6. Image
 Draws an image from a file.
 
@@ -444,6 +516,9 @@ Draws an image from a file.
 
 If you want to permanently "bake" these UI elements into your video (to save performance on the device, or to handle complex effects like blurs/shadows that might be slow to render in real-time), you can use the `video_processor.py` tool.
 
+**Prerequisites:**
+- No external dependencies required! Video processing uses PyAV (bundled FFmpeg libraries via pip).
+
 **Usage:**
 ```bash
 python tools/video_processor.py "path/to/theme/folder" "path/to/source_video.mp4"
@@ -452,9 +527,84 @@ python tools/video_processor.py "path/to/theme/folder" "path/to/source_video.mp4
 **What it does:**
 1.  Reads your `theme.yaml`.
 2.  Generates the UI overlay from `ui_elements`.
-3.  Resizes and crops the source video to match your display configuration.
+3.  Applies video processing options (trim, rotation, flip, resize/crop, loop crossfade).
 4.  Overlays the UI elements onto every frame of the video.
-5.  Updates your `theme.yaml` to point to the new processed video.
+5.  Encodes to optimized MP4 (H.264, no audio).
+6.  Updates your `theme.yaml` to point to the new processed video.
 
-**Prerequisites:**
-- FFmpeg installed and in your system PATH.
+### Video Processing Options
+
+The `video_processor.py` tool supports additional processing options configured in your `theme.yaml` under `video_background`:
+
+#### Seamless Loop Crossfade
+
+If your source video doesn't loop seamlessly, use `LOOP_FADE_DURATION` to create a crossfade:
+
+```yaml
+video_background:
+  ENABLE: True
+  LOCAL_PATH: res/videos/particles.mp4
+  LOOP_FADE_DURATION: 1.2  # 1.2 second crossfade
+```
+
+**Algorithm:**
+1. Cuts the beginning segment (equal to fade duration)
+2. Appends it to the end of the video
+3. Applies a crossfade blend at the junction
+
+This creates a video that loops seamlessly from end back to beginning.
+
+#### Rotation
+
+Rotate the video by 0, 90, 180, or 270 degrees clockwise:
+
+```yaml
+video_background:
+  ROTATE: 90  # Rotate 90° clockwise
+```
+
+#### Flip
+
+Mirror the video horizontally, vertically, or both:
+
+```yaml
+video_background:
+  FLIP: horizontal  # Options: horizontal, vertical, both
+```
+
+#### Trimming
+
+Extract a specific portion of the source video:
+
+```yaml
+video_background:
+  START_OFFSET: 00:15   # Start at 15 seconds (mm:ss format)
+  DURATION: 00:45       # Use 45 seconds from start offset
+```
+
+If `DURATION` is not specified, the video continues to the end after `START_OFFSET`.
+
+#### Full Example
+
+```yaml
+video_background:
+  ENABLE: True
+  LOCAL_PATH: res/videos/source.mp4
+  REMOTE_PATH: /mnt/SDCARD/video/processed.mp4
+  
+  # Processing options
+  START_OFFSET: 00:10      # Skip first 10 seconds
+  DURATION: 02:00          # Use 2 minutes
+  ROTATE: 90               # Rotate for portrait display
+  FLIP: horizontal         # Mirror horizontally
+  LOOP_FADE_DURATION: 1.5  # 1.5 second seamless loop crossfade
+```
+
+| Option               | Type    | Values                           | Default        | Description                   |
+| -------------------- | ------- | -------------------------------- | -------------- | ----------------------------- |
+| `LOOP_FADE_DURATION` | Float   | 0.0 - 5.0                        | `0` (disabled) | Crossfade duration in seconds |
+| `ROTATE`             | Integer | 0, 90, 180, 270                  | `0`            | Rotation in degrees clockwise |
+| `FLIP`               | String  | `horizontal`, `vertical`, `both` | None           | Flip direction                |
+| `START_OFFSET`       | String  | `mm:ss` format                   | `00:00`        | Starting point for trim       |
+| `DURATION`           | String  | `mm:ss` format                   | Full length    | Duration after start offset   |
+

@@ -144,3 +144,6 @@ external/LibreHardwareMonitor/LibreHardwareMonitorLib.sys
 
 # New theme engine testing
 res/themes/NZXT_color_ui/
+
+# Fonts cache
+res/fonts/cache

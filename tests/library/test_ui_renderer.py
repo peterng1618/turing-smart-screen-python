@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import library.log
 import library.config
 library.log.logger = MagicMock()
-library.config.FONTS_DIR = os.path.join(os.path.dirname(__file__), '../../../res/fonts') 
+library.config.FONTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../res/fonts')) 
 
 class TestUiRenderer(unittest.TestCase):
     def setUp(self):
@@ -88,3 +88,70 @@ class TestUiRenderer(unittest.TestCase):
                 
                 # If we want a check, let's check size if possible or side effects.
                 # Just ensuring it runs through the new 'image' type block is good enough for now.
+
+    def test_triangle_rendering(self):
+        self.theme_data['ui_elements'] = [{
+            'type': 'triangle',
+            'x1': 10, 'y1': 10,
+            'x2': 50, 'y2': 10,
+            'x3': 30, 'y3': 40,
+            'color': '255, 0, 0, 255',
+            'radius': 5
+        }]
+        overlay = self.renderer.generate_overlay()
+        # Verify color inside the triangle
+        self.assertEqual(overlay.getpixel((30, 20)), (255, 0, 0, 255))
+        # Verify outside
+        self.assertEqual(overlay.getpixel((0, 0))[3], 0)
+
+    def test_sheared_rectangle_rendering(self):
+        self.theme_data['ui_elements'] = [{
+            'type': 'rectangle',
+            'width': 100, 'height': 50,
+            'x': 50, 'y': 50,
+            'shear_left': 15,
+            'shear_right': 15,
+            'color': '0, 255, 0, 255',
+            'radius': 10
+        }]
+        overlay = self.renderer.generate_overlay()
+        # Should render without error
+        self.assertIsNotNone(overlay.getbbox())
+        # Check a pixel that should be filled in the sheared parallelogram
+        self.assertEqual(overlay.getpixel((100, 75)), (0, 255, 0, 255))
+
+    def test_icon_auto_resolution(self):
+        # Test 1: Resolve from Font Awesome URL with specific style
+        self.theme_data['ui_elements'] = [{
+            'type': 'icon',
+            'icon': 'https://fontawesome.com/icons/angrycreative?f=brands&s=solid',
+            'x': 50, 'y': 50,
+            'size': 60
+        }]
+        overlay = self.renderer.generate_overlay()
+        self.assertIsNotNone(overlay.getbbox())
+        
+        # Test 2: Resolve from complex URL user reported (user?f=classic&s=solid)
+        self.theme_data['ui_elements'] = [{
+            'type': 'icon',
+            'icon': 'https://fontawesome.com/icons/user?f=classic&s=solid',
+            'x': 50, 'y': 50,
+            'size': 60
+        }]
+        overlay = self.renderer.generate_overlay()
+        self.assertIsNotNone(overlay.getbbox())
+
+        # Test 3: Resolve from name 'house'
+        self.theme_data['ui_elements'] = [{
+            'type': 'icon',
+            'icon': 'house',
+            'x': 100, 'y': 100,
+            'size': 40
+        }]
+        overlay = self.renderer.generate_overlay()
+        self.assertIsNotNone(overlay.getbbox())
+        
+        # Check if the cache has icons.json
+        from library.config import FONTS_DIR
+        meta_path = os.path.join(FONTS_DIR, 'cache', 'icons.json')
+        self.assertTrue(os.path.exists(meta_path))
