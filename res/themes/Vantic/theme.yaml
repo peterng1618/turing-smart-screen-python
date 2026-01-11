@@ -1,0 +1,838 @@
+# Vantic System Monitor Theme
+# 5" Landscape (800x480) - Dark theme with neon green accents
+---
+author: "@peterng1618"
+
+display:
+  DISPLAY_SIZE: 5"
+  DISPLAY_ORIENTATION: landscape
+  DISPLAY_RGB_LED: 70, 255, 125
+
+static_images:
+  BACKGROUND:
+    PATH: background.png
+    X: 0
+    Y: 0
+    WIDTH: 800
+    HEIGHT: 480
+
+ui_elements:
+  # === OUTER BORDER ===
+  - type: rectangle
+    x: 6
+    y: 6
+    width: 788
+    height: 468
+    color: "0, 0, 0, 0"
+    radius: 8
+    outline:
+      width: 2
+      color: "70, 255, 125, 255"
+
+  # === TOP LEFT - Time Box ===
+  - type: rectangle
+    x: 15
+    y: 15
+    width: 150
+    height: 75
+    color: "0, 0, 0, 0"
+    radius: 5
+    outline:
+      width: 1
+      color: "70, 255, 125, 200"
+
+  # === TOP CENTER - Network Box ===
+  - type: rectangle
+    x: 175
+    y: 15
+    width: 235
+    height: 75
+    color: "0, 0, 0, 0"
+    radius: 5
+    outline:
+      width: 1
+      color: "70, 255, 125, 120"
+
+  # === VANTIC Logo ===
+  - type: text
+    text: "VANTIC"
+    x: 485
+    y: 40
+    font: "geforce/GeForce-Bold.ttf"
+    font_size: 24
+    color: "160, 160, 160, 255"
+
+  # === TOP RIGHT - Storage Box ===
+  - type: rectangle
+    x: 595
+    y: 15
+    width: 190
+    height: 75
+    color: "0, 0, 0, 0"
+    radius: 5
+    outline:
+      width: 1
+      color: "70, 255, 125, 120"
+
+  # === CENTER - Temperature Panel ===
+  - type: rectangle
+    x: 345
+    y: 110
+    width: 110
+    height: 95
+    color: "0, 0, 0, 0"
+    radius: 5
+    outline:
+      width: 1
+      color: "70, 255, 125, 100"
+
+  # === Video Memory Box ===
+  - type: rectangle
+    x: 590
+    y: 158
+    width: 105
+    height: 24
+    color: "0, 0, 0, 0"
+    radius: 3
+    outline:
+      width: 1
+      color: "100, 200, 150, 150"
+
+  # === CENTER - Line Graph Box ===
+  - type: rectangle
+    x: 290
+    y: 265
+    width: 220
+    height: 75
+    color: "0, 0, 0, 0"
+    radius: 5
+    outline:
+      width: 1
+      color: "70, 255, 125, 60"
+
+  # === Usage Labels Box ===
+  - type: rectangle
+    x: 330
+    y: 345
+    width: 140
+    height: 25
+    color: "0, 0, 0, 0"
+    radius: 3
+    outline:
+      width: 1
+      color: "70, 255, 125, 100"
+
+  # === BOTTOM LEFT - Hardware Info ===
+  - type: rectangle
+    x: 15
+    y: 385
+    width: 210
+    height: 80
+    color: "0, 0, 0, 0"
+    radius: 5
+    outline:
+      width: 1
+      color: "70, 255, 125, 60"
+
+  # === BOTTOM CENTER - RAM Panel ===
+  - type: rectangle
+    x: 305
+    y: 385
+    width: 190
+    height: 80
+    color: "0, 0, 0, 0"
+    radius: 5
+    outline:
+      width: 1
+      color: "70, 255, 125, 100"
+
+  # === BOTTOM RIGHT - Fan Info ===
+  - type: rectangle
+    x: 580
+    y: 385
+    width: 205
+    height: 80
+    color: "0, 0, 0, 0"
+    radius: 5
+    outline:
+      width: 1
+      color: "70, 255, 125, 60"
+
+  # === CPU OUTER DECORATIVE RING ===
+  - type: circle
+    x: 145
+    y: 270
+    radius: 115
+    color: "0, 0, 0, 0"
+    outline:
+      width: 2
+      color: "70, 255, 125, 50"
+
+  # === GPU OUTER DECORATIVE RING ===
+  - type: circle
+    x: 655
+    y: 270
+    radius: 115
+    color: "0, 0, 0, 0"
+    outline:
+      width: 2
+      color: "70, 255, 125, 50"
+
+  # === STATIC LABELS ===
+
+  # UpTime label
+  - type: text
+    text: "UpTime"
+    x: 25
+    y: 62
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 12
+    color: "150, 150, 150, 255"
+
+  # Network labels
+  - type: text
+    text: "Download"
+    x: 200
+    y: 22
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 9
+    color: "150, 150, 150, 255"
+
+  - type: text
+    text: "Upload"
+    x: 305
+    y: 22
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 9
+    color: "150, 150, 150, 255"
+
+  - type: text
+    text: "Speed"
+    x: 218
+    y: 62
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 8
+    color: "100, 100, 100, 255"
+
+  - type: text
+    text: "Speed"
+    x: 322
+    y: 62
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 8
+    color: "100, 100, 100, 255"
+
+  # Storage labels
+  - type: text
+    text: "C: Storage"
+    x: 605
+    y: 25
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 11
+    color: "180, 180, 180, 255"
+
+  - type: text
+    text: "D: Storage"
+    x: 605
+    y: 52
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 11
+    color: "180, 180, 180, 255"
+
+  # Storage bar backgrounds
+  - type: rectangle
+    x: 700
+    y: 27
+    width: 70
+    height: 12
+    color: "35, 45, 55, 255"
+    radius: 2
+
+  - type: rectangle
+    x: 700
+    y: 54
+    width: 70
+    height: 12
+    color: "35, 45, 55, 255"
+    radius: 2
+
+  # Temperature panel labels
+  - type: icon
+    icon: "microchip"
+    x: 352
+    y: 120
+    size: 12
+    color: "180, 180, 180, 255"
+
+  - type: text
+    text: "Mainboard"
+    x: 370
+    y: 118
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 11
+    color: "180, 180, 180, 255"
+
+  - type: text
+    text: "27°C"
+    x: 435
+    y: 118
+    font: "roboto-mono/RobotoMono-Regular.ttf"
+    font_size: 11
+    color: "180, 180, 180, 255"
+
+  - type: icon
+    icon: "hard-drive"
+    x: 352
+    y: 148
+    size: 12
+    color: "180, 180, 180, 255"
+
+  - type: text
+    text: "SSD C:"
+    x: 370
+    y: 146
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 11
+    color: "180, 180, 180, 255"
+
+  - type: text
+    text: "27°C"
+    x: 435
+    y: 146
+    font: "roboto-mono/RobotoMono-Regular.ttf"
+    font_size: 11
+    color: "180, 180, 180, 255"
+
+  - type: icon
+    icon: "hard-drive"
+    x: 352
+    y: 176
+    size: 12
+    color: "180, 180, 180, 255"
+
+  - type: text
+    text: "SSD D:"
+    x: 370
+    y: 174
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 11
+    color: "180, 180, 180, 255"
+
+  - type: text
+    text: "39°C"
+    x: 435
+    y: 174
+    font: "roboto-mono/RobotoMono-Regular.ttf"
+    font_size: 11
+    color: "180, 180, 180, 255"
+
+  # Video Memory label
+  - type: text
+    text: "Video Memory"
+    x: 600
+    y: 163
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 9
+    color: "100, 200, 150, 255"
+
+  # CPU section (inside gauge circle)
+  - type: icon
+    icon: "temperature-half"
+    x: 90
+    y: 235
+    size: 18
+    color: "255, 200, 50, 255"
+
+  - type: text
+    text: "CPU"
+    x: 108
+    y: 232
+    font: "roboto/Roboto-Bold.ttf"
+    font_size: 20
+    color: "255, 255, 255, 255"
+
+  - type: icon
+    icon: "fan"
+    x: 95
+    y: 295
+    size: 12
+    color: "70, 255, 125, 255"
+
+  - type: text
+    text: "Fan Speed"
+    x: 110
+    y: 293
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 10
+    color: "150, 150, 150, 255"
+
+  # GPU section (inside gauge circle)
+  - type: icon
+    icon: "temperature-half"
+    x: 600
+    y: 235
+    size: 18
+    color: "255, 200, 50, 255"
+
+  - type: text
+    text: "GPU"
+    x: 618
+    y: 232
+    font: "roboto/Roboto-Bold.ttf"
+    font_size: 20
+    color: "255, 255, 255, 255"
+
+  - type: icon
+    icon: "fan"
+    x: 605
+    y: 295
+    size: 12
+    color: "70, 255, 125, 255"
+
+  - type: text
+    text: "Fan Speed"
+    x: 620
+    y: 293
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 10
+    color: "150, 150, 150, 255"
+
+  # Usage labels
+  - type: text
+    text: "CPU Usage"
+    x: 340
+    y: 350
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 10
+    color: "100, 200, 150, 255"
+
+  - type: text
+    text: "GPU Usage"
+    x: 405
+    y: 350
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 10
+    color: "100, 200, 150, 255"
+
+  # RAM section labels
+  - type: text
+    text: "RAM Usage"
+    x: 318
+    y: 395
+    font: "roboto/Roboto-Bold.ttf"
+    font_size: 13
+    color: "180, 180, 180, 255"
+
+  - type: text
+    text: "Used"
+    x: 318
+    y: 420
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 10
+    color: "150, 150, 150, 255"
+
+  - type: text
+    text: "Free"
+    x: 318
+    y: 440
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 10
+    color: "150, 150, 150, 255"
+
+  # Fan section labels
+  - type: icon
+    icon: "fan"
+    x: 592
+    y: 405
+    size: 12
+    color: "70, 255, 125, 255"
+
+  - type: text
+    text: "Intake Fans"
+    x: 610
+    y: 403
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 10
+    color: "150, 150, 150, 255"
+
+  - type: icon
+    icon: "fan"
+    x: 592
+    y: 432
+    size: 12
+    color: "70, 255, 125, 255"
+
+  - type: text
+    text: "Exhaust Fans"
+    x: 610
+    y: 430
+    font: "roboto/Roboto-Regular.ttf"
+    font_size: 10
+    color: "150, 150, 150, 255"
+
+STAT:
+  CPU:
+    PERCENTAGE:
+      INTERVAL: 1
+      RADIAL:
+        SHOW: True
+        X: 145
+        Y: 270
+        RADIUS: 100
+        WIDTH: 14
+        MIN_VALUE: 0
+        MAX_VALUE: 100
+        ANGLE_START: 135
+        ANGLE_END: 45
+        ANGLE_STEPS: 1
+        ANGLE_SEP: 0
+        CLOCKWISE: True
+        BAR_COLOR: 70, 255, 125
+        SHOW_TEXT: False
+        SHOW_UNIT: False
+        BACKGROUND_IMAGE: background.png
+      TEXT:
+        SHOW: True
+        SHOW_UNIT: True
+        X: 388
+        Y: 350
+        FONT: roboto-mono/RobotoMono-Bold.ttf
+        FONT_SIZE: 10
+        FONT_COLOR: 255, 255, 255
+        BACKGROUND_IMAGE: background.png
+        WIDTH: 35
+        ANCHOR: rt
+      LINE_GRAPH:
+        SHOW: True
+        X: 295
+        Y: 272
+        WIDTH: 210
+        HEIGHT: 62
+        MIN_VALUE: 0
+        MAX_VALUE: 100
+        HISTORY_SIZE: 60
+        AUTOSCALE: False
+        LINE_COLOR: 100, 200, 100
+        LINE_WIDTH: 1
+        AXIS: False
+        BACKGROUND_IMAGE: background.png
+    TEMPERATURE:
+      INTERVAL: 2
+      TEXT:
+        SHOW: True
+        SHOW_UNIT: True
+        X: 152
+        Y: 232
+        FONT: roboto-mono/RobotoMono-Bold.ttf
+        FONT_SIZE: 34
+        FONT_COLOR: 255, 255, 255
+        BACKGROUND_IMAGE: background.png
+        WIDTH: 100
+        ANCHOR: lt
+    FAN_SPEED:
+      INTERVAL: 2
+      TEXT:
+        SHOW: True
+        SHOW_UNIT: True
+        X: 172
+        Y: 293
+        FONT: roboto-mono/RobotoMono-Regular.ttf
+        FONT_SIZE: 10
+        FONT_COLOR: 150, 150, 150
+        BACKGROUND_IMAGE: background.png
+        WIDTH: 60
+        ANCHOR: lt
+
+  GPU:
+    INTERVAL: 1
+    PERCENTAGE:
+      RADIAL:
+        SHOW: True
+        X: 655
+        Y: 270
+        RADIUS: 100
+        WIDTH: 14
+        MIN_VALUE: 0
+        MAX_VALUE: 100
+        ANGLE_START: 135
+        ANGLE_END: 45
+        ANGLE_STEPS: 1
+        ANGLE_SEP: 0
+        CLOCKWISE: True
+        BAR_COLOR: 70, 255, 125
+        SHOW_TEXT: False
+        SHOW_UNIT: False
+        BACKGROUND_IMAGE: background.png
+      TEXT:
+        SHOW: True
+        SHOW_UNIT: True
+        X: 460
+        Y: 350
+        FONT: roboto-mono/RobotoMono-Bold.ttf
+        FONT_SIZE: 10
+        FONT_COLOR: 255, 255, 255
+        BACKGROUND_IMAGE: background.png
+        WIDTH: 35
+        ANCHOR: rt
+      LINE_GRAPH:
+        SHOW: True
+        X: 295
+        Y: 272
+        WIDTH: 210
+        HEIGHT: 62
+        MIN_VALUE: 0
+        MAX_VALUE: 100
+        HISTORY_SIZE: 60
+        AUTOSCALE: False
+        LINE_COLOR: 200, 200, 100
+        LINE_WIDTH: 1
+        AXIS: False
+        BACKGROUND_IMAGE: background.png
+    TEMPERATURE:
+      TEXT:
+        SHOW: True
+        SHOW_UNIT: True
+        X: 662
+        Y: 232
+        FONT: roboto-mono/RobotoMono-Bold.ttf
+        FONT_SIZE: 34
+        FONT_COLOR: 255, 255, 255
+        BACKGROUND_IMAGE: background.png
+        WIDTH: 100
+        ANCHOR: lt
+    FAN_SPEED:
+      TEXT:
+        SHOW: True
+        SHOW_UNIT: True
+        X: 682
+        Y: 293
+        FONT: roboto-mono/RobotoMono-Regular.ttf
+        FONT_SIZE: 10
+        FONT_COLOR: 150, 150, 150
+        BACKGROUND_IMAGE: background.png
+        WIDTH: 65
+        ANCHOR: lt
+    MEMORY_USED:
+      TEXT:
+        SHOW: True
+        SHOW_UNIT: True
+        X: 665
+        Y: 163
+        FONT: roboto-mono/RobotoMono-Bold.ttf
+        FONT_SIZE: 9
+        FONT_COLOR: 100, 200, 150
+        BACKGROUND_IMAGE: background.png
+        WIDTH: 45
+        ANCHOR: lt
+
+  MEMORY:
+    INTERVAL: 2
+    VIRTUAL:
+      PERCENT_TEXT:
+        SHOW: True
+        SHOW_UNIT: True
+        X: 420
+        Y: 395
+        FONT: roboto-mono/RobotoMono-Bold.ttf
+        FONT_SIZE: 13
+        FONT_COLOR: 255, 255, 255
+        BACKGROUND_IMAGE: background.png
+        WIDTH: 45
+        ANCHOR: lt
+      USED:
+        SHOW: True
+        SHOW_UNIT: True
+        X: 375
+        Y: 420
+        FONT: roboto-mono/RobotoMono-Regular.ttf
+        FONT_SIZE: 10
+        FONT_COLOR: 180, 180, 180
+        BACKGROUND_IMAGE: background.png
+        WIDTH: 65
+        ANCHOR: lt
+      FREE:
+        SHOW: True
+        SHOW_UNIT: True
+        X: 375
+        Y: 440
+        FONT: roboto-mono/RobotoMono-Regular.ttf
+        FONT_SIZE: 10
+        FONT_COLOR: 180, 180, 180
+        BACKGROUND_IMAGE: background.png
+        WIDTH: 65
+        ANCHOR: lt
+
+  DISK:
+    INTERVAL: 10
+    USED:
+      GRAPH:
+        SHOW: True
+        X: 700
+        Y: 27
+        WIDTH: 70
+        HEIGHT: 12
+        MIN_VALUE: 0
+        MAX_VALUE: 100
+        BAR_COLOR: 70, 255, 125
+        BAR_OUTLINE: False
+        BACKGROUND_IMAGE: background.png
+      PERCENT_TEXT:
+        SHOW: True
+        SHOW_UNIT: True
+        X: 775
+        Y: 25
+        FONT: roboto-mono/RobotoMono-Regular.ttf
+        FONT_SIZE: 10
+        FONT_COLOR: 180, 180, 180
+        BACKGROUND_IMAGE: background.png
+        WIDTH: 32
+        ANCHOR: lt
+
+  NET:
+    INTERVAL: 1
+    ETH:
+      UPLOAD:
+        TEXT:
+          SHOW: True
+          X: 305
+          Y: 38
+          FONT: roboto-mono/RobotoMono-Bold.ttf
+          FONT_SIZE: 10
+          FONT_COLOR: 255, 255, 255
+          BACKGROUND_IMAGE: background.png
+          WIDTH: 70
+          ANCHOR: lt
+        LINE_GRAPH:
+          SHOW: True
+          X: 300
+          Y: 48
+          WIDTH: 85
+          HEIGHT: 18
+          MIN_VALUE: 0
+          MAX_VALUE: 100
+          HISTORY_SIZE: 30
+          AUTOSCALE: True
+          LINE_COLOR: 70, 255, 125
+          LINE_WIDTH: 1
+          AXIS: False
+          BACKGROUND_IMAGE: background.png
+      DOWNLOAD:
+        TEXT:
+          SHOW: True
+          X: 200
+          Y: 38
+          FONT: roboto-mono/RobotoMono-Bold.ttf
+          FONT_SIZE: 10
+          FONT_COLOR: 255, 255, 255
+          BACKGROUND_IMAGE: background.png
+          WIDTH: 70
+          ANCHOR: lt
+        LINE_GRAPH:
+          SHOW: True
+          X: 195
+          Y: 48
+          WIDTH: 85
+          HEIGHT: 18
+          MIN_VALUE: 0
+          MAX_VALUE: 100
+          HISTORY_SIZE: 30
+          AUTOSCALE: True
+          LINE_COLOR: 70, 255, 125
+          LINE_WIDTH: 1
+          AXIS: False
+          BACKGROUND_IMAGE: background.png
+
+  DATE:
+    INTERVAL: 1
+    HOUR:
+      TEXT:
+        FORMAT: "HH:mm:ss"
+        SHOW: True
+        X: 25
+        Y: 22
+        FONT: roboto-mono/RobotoMono-Bold.ttf
+        FONT_SIZE: 32
+        FONT_COLOR: 255, 255, 255
+        BACKGROUND_IMAGE: background.png
+        WIDTH: 135
+        ANCHOR: lt
+
+  UPTIME:
+    INTERVAL: 1
+    FORMATTED:
+      TEXT:
+        SHOW: True
+        X: 78
+        Y: 62
+        FONT: roboto-mono/RobotoMono-Regular.ttf
+        FONT_SIZE: 10
+        FONT_COLOR: 180, 180, 180
+        BACKGROUND_IMAGE: background.png
+        WIDTH: 70
+        ANCHOR: lt
+
+dynamic_text:
+  INTERVAL: 5
+  CPU_INFO:
+    SHOW: True
+    TEXT: "AMD Ryzen 9 5900XT"
+    X: 25
+    Y: 395
+    FONT: roboto/Roboto-Bold.ttf
+    FONT_SIZE: 12
+    FONT_COLOR: 255, 255, 255
+    BACKGROUND_IMAGE: background.png
+  CPU_SPEED_INFO:
+    SHOW: True
+    TEXT: "Speed {CPU_FREQUENCY:nu} MHz"
+    X: 25
+    Y: 413
+    FONT: roboto/Roboto-Regular.ttf
+    FONT_SIZE: 9
+    FONT_COLOR: 200, 200, 0
+    BACKGROUND_IMAGE: background.png
+  GPU_INFO:
+    SHOW: True
+    TEXT: "NVIDIA GeForce RTX 3080 Ti"
+    X: 25
+    Y: 432
+    FONT: roboto/Roboto-Bold.ttf
+    FONT_SIZE: 12
+    FONT_COLOR: 255, 255, 255
+    BACKGROUND_IMAGE: background.png
+  GPU_SPEED_INFO:
+    SHOW: True
+    TEXT: "Speed {GPU_FREQUENCY:nu} MHz"
+    X: 25
+    Y: 450
+    FONT: roboto/Roboto-Regular.ttf
+    FONT_SIZE: 9
+    FONT_COLOR: 200, 200, 0
+    BACKGROUND_IMAGE: background.png
+  INTAKE_FAN:
+    SHOW: True
+    TEXT: "889 RPM"
+    X: 708
+    Y: 403
+    FONT: roboto-mono/RobotoMono-Regular.ttf
+    FONT_SIZE: 10
+    FONT_COLOR: 180, 180, 180
+    BACKGROUND_IMAGE: background.png
+  EXHAUST_FAN:
+    SHOW: True
+    TEXT: "909 RPM"
+    X: 708
+    Y: 430
+    FONT: roboto-mono/RobotoMono-Regular.ttf
+    FONT_SIZE: 10
+    FONT_COLOR: 180, 180, 180
+    BACKGROUND_IMAGE: background.png
+  D_STORAGE:
+    SHOW: True
+    TEXT: "41%"
+    X: 775
+    Y: 52
+    FONT: roboto-mono/RobotoMono-Regular.ttf
+    FONT_SIZE: 10
+    FONT_COLOR: 180, 180, 180
+    BACKGROUND_IMAGE: background.png
