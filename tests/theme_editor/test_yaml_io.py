@@ -62,8 +62,9 @@ class TestV1ToV2Conversion:
         
         v2 = io._convert_v1_to_v2(v1)
         
-        assert v2["background"]["type"] == "image"
-        assert v2["background"]["path"] == "bg.png"
+        # Background image is now in ui_elements
+        bg = next(e for e in v2["ui_elements"] if e["type"] == "background_image")
+        assert bg["path"] == "bg.png"
     
     def test_convert_video_background(self):
         """Test converting video background."""
@@ -78,8 +79,9 @@ class TestV1ToV2Conversion:
         
         v2 = io._convert_v1_to_v2(v1)
         
-        assert v2["background"]["type"] == "video"
-        assert "video" in v2["background"]
+        # Video background is now in ui_elements
+        bv = next(e for e in v2["ui_elements"] if e["type"] == "background_video")
+        assert bv["enabled"] is True
     
     def test_convert_static_images(self):
         """Test converting static images to ui_elements."""
@@ -93,12 +95,11 @@ class TestV1ToV2Conversion:
         
         v2 = io._convert_v1_to_v2(v1)
         
-        # BACKGROUND should not be in ui_elements (it's the background)
-        assert len(v2["ui_elements"]) == 1
+        # 3 elements: background_video, background_image, and LOGO
+        assert len(v2["ui_elements"]) == 3
         
-        logo = v2["ui_elements"][0]
+        logo = next(e for e in v2["ui_elements"] if e["name"] == "LOGO")
         assert logo["type"] == "image"
-        assert logo["name"] == "LOGO"
         assert logo["path"] == "logo.png"
         assert logo["x"] == 10
         assert logo["y"] == 20
@@ -121,11 +122,11 @@ class TestV1ToV2Conversion:
         
         v2 = io._convert_v1_to_v2(v1)
         
-        assert len(v2["ui_elements"]) == 1
+        # 3 elements: background_video, background_image, and TITLE
+        assert len(v2["ui_elements"]) == 3
         
-        text = v2["ui_elements"][0]
+        text = next(e for e in v2["ui_elements"] if e["name"] == "TITLE")
         assert text["type"] == "text"
-        assert text["name"] == "TITLE"
         assert text["text"] == "Hello World"
         assert text["font_size"] == 24
     
@@ -141,9 +142,10 @@ class TestV1ToV2Conversion:
         
         v2 = io._convert_v1_to_v2(v1)
         
-        assert len(v2["ui_elements"]) == 2
-        assert v2["ui_elements"][0]["type"] == "rectangle"
-        assert v2["ui_elements"][1]["type"] == "circle"
+        # 2 default background elements + 2 passed through
+        assert len(v2["ui_elements"]) == 4
+        assert any(e["type"] == "rectangle" for e in v2["ui_elements"])
+        assert any(e["type"] == "circle" for e in v2["ui_elements"])
     
     def test_convert_stats_text(self):
         """Test converting STAT text elements."""
@@ -196,54 +198,81 @@ class TestV2ToV1Conversion:
         assert v1["display"]["DISPLAY_SIZE"] == '5"'
     
     def test_convert_background_to_static_images(self):
-        """Test converting image background to static_images."""
-        io = ThemeYamlIO()
-        v2 = {
-            "background": {
-                "type": "image",
-                "path": "bg.png",
-            }
-        }
-        
-        v1 = io._convert_v2_to_v1(v2)
-        
-        assert "BACKGROUND" in v1["static_images"]
-        assert v1["static_images"]["BACKGROUND"]["PATH"] == "bg.png"
-    
-    def test_convert_image_elements(self):
-        """Test converting image ui_elements to static_images."""
-        io = ThemeYamlIO()
-        v2 = {
-            "ui_elements": [
-                {"type": "image", "name": "LOGO", "path": "logo.png", "x": 10, "y": 20}
-            ]
-        }
-        
-        v1 = io._convert_v2_to_v1(v2)
-        
-        assert "LOGO" in v1["static_images"]
-    
-    def test_convert_text_elements(self):
-        """Test converting text ui_elements to static_text."""
+        """Test converting background_image element to BACKGROUND image."""
         io = ThemeYamlIO()
         v2 = {
             "ui_elements": [
                 {
-                    "type": "text",
-                    "name": "TITLE",
-                    "text": "Test",
-                    "x": 50,
-                    "y": 100,
-                    "font": "roboto/Roboto.ttf",
-                    "font_size": 16,
+                    "type": "background_image",
+                    "name": "Background Image",
+                    "path": "custom_bg.png",
                 }
             ]
         }
         
         v1 = io._convert_v2_to_v1(v2)
         
+        # Background path in v1 export is always "background.png" (the baked file)
+        assert "BACKGROUND" in v1["static_images"]
+        assert v1["static_images"]["BACKGROUND"]["PATH"] == "background.png"
+    
+    def test_ui_elements_export(self):
+        """Test that ui_elements are exported correctly."""
+        io = ThemeYamlIO()
+        v2 = {
+            "ui_elements": [
+                {"type": "image", "name": "LOGO", "path": "logo.png", "x": 10, "y": 20},
+                {"type": "text", "name": "TITLE", "text": "Test", "x": 50, "y": 100}
+            ]
+        }
+        
+        v1 = io._convert_v2_to_v1(v2)
+        
+        assert "LOGO" in v1["static_images"]
         assert "TITLE" in v1["static_text"]
-        assert v1["static_text"]["TITLE"]["TEXT"] == "Test"
+    
+    def test_dynamic_text_exported(self):
+        """Test that dynamic_text IS exported to theme.yaml (as STATS or dynamic_text)."""
+        io = ThemeYamlIO()
+        v2 = {
+            "dynamic_elements": [
+                {
+                    "type": "dynamic_text",
+                    "name": "CPU Usage",
+                    "sensor": "CPU.PERCENTAGE",
+                    "text": "{CPU.PERCENTAGE:u}",
+                    "x": 10, "y": 10,
+                    "interval": 1.0
+                }
+            ]
+        }
+        
+        v1 = io._convert_v2_to_v1(v2)
+        
+        # Should be in STATS because it matches the {SENSOR:u} pattern
+        assert "STATS" in v1
+        assert "CPU" in v1["STATS"]
+        assert v1["STATS"]["CPU"]["PERCENTAGE"]["TEXT"]["SHOW"] is True
+    
+    def test_dynamic_text_custom_pattern_exported(self):
+        """Test that custom pattern dynamic text goes into dynamic_text section."""
+        io = ThemeYamlIO()
+        v2 = {
+            "dynamic_elements": [
+                {
+                    "type": "dynamic_text",
+                    "name": "Combined",
+                    "text": "C: {CPU.PERCENTAGE:u} G: {GPU.PERCENTAGE:u}",
+                    "x": 10, "y": 10
+                }
+            ]
+        }
+        
+        v1 = io._convert_v2_to_v1(v2)
+        
+        assert "dynamic_text" in v1
+        assert "Combined" in v1["dynamic_text"]
+        assert v1["dynamic_text"]["Combined"]["TEXT"] == "C: {CPU.PERCENTAGE:u} G: {GPU.PERCENTAGE:u}"
 
 
 class TestListThemes:

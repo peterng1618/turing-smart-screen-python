@@ -12,6 +12,7 @@ Provides a QGraphicsView-based canvas for visual editing with:
 
 import logging
 import re
+import datetime
 from typing import Dict, List, Optional, Set
 
 import library.config as config
@@ -30,7 +31,10 @@ from PyQt6.QtGui import (
 )
 
 from theme_editor.models.theme_model import ThemeModel
-from theme_editor.models.element import Element, ElementType, create_element
+from theme_editor.models.element import (
+    Element, ElementType, create_element,
+    BackgroundImageElement, BackgroundVideoElement
+)
 from theme_editor.commands.undo_commands import (
     MoveElementCommand, ChangePropertyCommand, ChangePropertiesCommand
 )
@@ -465,12 +469,17 @@ class ElementItem(QGraphicsObject):
         self._cached_icon_unicode = None  # Cached unicode char for icon
         
         # Selection state
-        self.setFlags(
-            QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
-            QGraphicsItem.GraphicsItemFlag.ItemIsMovable |
-            QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
-        )
-        self.setAcceptHoverEvents(True)
+        is_bg = isinstance(element, (BackgroundImageElement, BackgroundVideoElement))
+        flags = QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
+        if not is_bg:
+            flags |= QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            flags |= QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+        
+        self.setFlags(flags)
+        self.setAcceptHoverEvents(not is_bg)
+        
+        if is_bg:
+            self.setZValue(-500)
         
         # Connect initial properties
         self.update_from_element()
@@ -705,11 +714,13 @@ class ElementItem(QGraphicsObject):
             if font_id != -1:
                 families = QFontDatabase.applicationFontFamilies(font_id)
                 if families:
-                    font = QFont(families[0], font_size)
+                    font = QFont(families[0])
+                    font.setPixelSize(font_size)
         
         if not font:
             # Fallback
-            font = QFont("Arial", font_size)
+            font = QFont("Arial")
+            font.setPixelSize(font_size)
         
         # Cache the font
         self._font = font
@@ -727,7 +738,48 @@ class ElementItem(QGraphicsObject):
                 flag = parts[1] if len(parts) > 1 else None
                 
                 value = ""
-                if flag == 'nu':
+                if sensor_id.startswith("DATE"):
+                    # Handle date/time formatting
+                    now = datetime.datetime.now()
+                    if flag == "short":
+                        if "HOUR" in sensor_id:
+                            value = now.strftime("%I:%M %p")
+                        else:
+                            value = now.strftime("%m/%d/%y")
+                    elif flag == "medium":
+                        if "HOUR" in sensor_id:
+                            value = now.strftime("%I:%M:%S %p")
+                        else:
+                            value = now.strftime("%b %d, %Y")
+                    elif flag == "long":
+                        if "HOUR" in sensor_id:
+                            value = now.strftime("%I:%M:%S %p %Z")
+                        else:
+                            value = now.strftime("%B %d, %Y")
+                    elif flag == "full":
+                        if "HOUR" in sensor_id:
+                            value = now.strftime("%A, %B %d, %Y %I:%M:%S %p %Z")
+                        else:
+                            value = now.strftime("%A, %B %d, %Y")
+                    elif flag:
+                        # Try custom strftime pattern
+                        try:
+                            # Map common Java/Qt patterns to Python if needed
+                            pattern = flag.replace("yyyy", "%Y").replace("yy", "%y").replace("MM", "%m").replace("dd", "%d")
+                            pattern = pattern.replace("HH", "%H").replace("mm", "%M").replace("ss", "%S").replace("zzz", "%Z")
+                            value = now.strftime(pattern)
+                        except:
+                            value = str(config.STATS_VALUES.get(sensor_id, f"{{{placeholder}}}"))
+                    else:
+                        value = str(config.STATS_VALUES.get(sensor_id, f"{{{placeholder}}}"))
+                elif sensor_id == "UPTIME":
+                    if flag == "SECONDS":
+                        value = str(config.STATS_VALUES.get("UPTIME.SECONDS", "228790"))
+                    elif flag == "FORMATTED":
+                        value = str(config.STATS_VALUES.get("UPTIME.FORMATTED", "2 days, 15:33:10"))
+                    else:
+                        value = str(config.STATS_VALUES.get("UPTIME.FORMATTED", f"{{{placeholder}}}"))
+                elif flag == 'nu':
                     value = str(config.STATS_VALUES.get(f"{sensor_id}_RAW", f"{{{placeholder}}}"))
                 elif flag == 'u':
                     value = str(config.STATS_VALUES.get(sensor_id, f"{{{placeholder}}}"))
@@ -763,15 +815,38 @@ class ElementItem(QGraphicsObject):
             # Calculate bounding rect for text
             rect = metrics.boundingRect(text)
             
-            # Update element properties if they differ significantly (to avoid loops)
-            new_w = int(rect.width() + 4) # Add small padding
-            new_h = int(rect.height() + 4)
+            # Use static size if requested
+            force_static = getattr(self._element, 'force_static', False)
+            if force_static:
+                new_w = self._element.width
+                new_h = self._element.height
+            else:
+                # Update element properties if they differ significantly (to avoid loops)
+                new_w = int(max(10, rect.width() + 4)) # Add small padding
+                new_h = int(max(10, rect.height() + 4))
+                
+                if self._element.width != new_w or self._element.height != new_h:
+                    self._model.set_element_property(self._element.id, "width", new_w)
+                    self._model.set_element_property(self._element.id, "height", new_h)
             
-            if self._element.width != new_w or self._element.height != new_h:
-                self._model.set_element_property(self._element.id, "width", new_w)
-                self._model.set_element_property(self._element.id, "height", new_h)
-                self.setRect(0, 0, new_w, new_h)
-                self.setTransformOriginPoint(self.rect().center())
+            # Calculate offsets based on anchor (Pillow style)
+            anchor = getattr(self._element, 'anchor', 'lt')
+            off_x = 0
+            if anchor.startswith('m'): # middle
+                off_x = -new_w / 2
+            elif anchor.startswith('r'): # right
+                off_x = -new_w
+                
+            off_y = 0
+            # Vertical: t (top/ascender), m (middle), b (bottom)
+            if 'm' in anchor[1:]: # middle
+                off_y = -new_h / 2
+            elif 'b' in anchor[1:]: # bottom
+                off_y = -new_h
+            
+            # Update rect with offsets
+            self.setRect(off_x, off_y, new_w, new_h)
+            self.setTransformOriginPoint(self.rect().center())
         finally:
             self._is_updating_size = False
     
@@ -1187,8 +1262,11 @@ class ElementItem(QGraphicsObject):
 
             # Enforce minimum size
             if rect.width() >= min_size and rect.height() >= min_size:
-                # SPECIAL HANDLING FOR TEXT ELEMENTS: resize updates font size
-                if self._element.element_type in (ElementType.TEXT, ElementType.DYNAMIC_TEXT) and handle in ('tl', 'tr', 'bl', 'br'):
+                # SPECIAL HANDLING FOR STATIC TEXT: resize updates font size
+                # DYNAMIC TEXT now updates width/height instead of font size
+                is_ui_text = (self._element.element_type == ElementType.TEXT)
+                
+                if is_ui_text and handle in ('tl', 'tr', 'bl', 'br'):
                     # Calculate new font size based on height change ratio
                     old_h = self._resize_start_rect.height()
                     new_h = rect.height()
@@ -1199,6 +1277,7 @@ class ElementItem(QGraphicsObject):
                             self._model.set_element_property(self._element.id, "font_size", new_fs)
                         # The update_from_element will handle the rest
                 else:
+                    # For all other elements including DYNAMIC_TEXT, update dimensions
                     self.setRect(rect.normalized())
                     self.update()
             
@@ -1422,15 +1501,25 @@ class ElementItem(QGraphicsObject):
             color = self._get_element_color()
             painter.setPen(QPen(color))
             
-            # Alignment
+            # Alignment (for multiline or within the padded rect)
             align_str = getattr(self._element, 'align', 'left')
-            flags = Qt.AlignmentFlag.AlignVCenter
+            anchor = getattr(self._element, 'anchor', 'lt')
+            
+            # Horizontal alignment
             if align_str == 'center':
-                flags |= Qt.AlignmentFlag.AlignCenter
+                flags = Qt.AlignmentFlag.AlignHCenter
             elif align_str == 'right':
-                flags |= Qt.AlignmentFlag.AlignRight
+                flags = Qt.AlignmentFlag.AlignRight
             else:
-                flags |= Qt.AlignmentFlag.AlignLeft
+                flags = Qt.AlignmentFlag.AlignLeft
+                
+            # Vertical alignment based on anchor
+            if 'm' in anchor[1:]:
+                flags |= Qt.AlignmentFlag.AlignVCenter
+            elif 'b' in anchor[1:]:
+                flags |= Qt.AlignmentFlag.AlignBottom
+            else:
+                flags |= Qt.AlignmentFlag.AlignTop
                 
             painter.drawText(rect, flags, text)
             
@@ -1439,6 +1528,32 @@ class ElementItem(QGraphicsObject):
                 painter.setPen(QPen(QColor(0, 150, 255, 50)))
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawRect(rect)
+        
+        elif elem_type == ElementType.BACKGROUND_IMAGE:
+            # Draw actual background image
+            image_path = getattr(self._element, 'path', '')
+            if image_path:
+                if self._cached_pixmap is None or self._cached_image_path != image_path:
+                    self._load_image_pixmap(image_path)
+                
+                if self._cached_pixmap and not self._cached_pixmap.isNull():
+                    painter.drawPixmap(rect.toRect(), self._cached_pixmap)
+                else:
+                    self._draw_image_placeholder(painter, rect, "No Background")
+            else:
+                self._draw_image_placeholder(painter, rect, "No Image")
+                
+        elif elem_type == ElementType.BACKGROUND_VIDEO:
+            # Draw video background frame (background.png)
+            # For video backgrounds, we render 'background.png' which is extracted by video_processor
+            image_path = "background.png"
+            if self._cached_pixmap is None or self._cached_image_path != image_path:
+                self._load_image_pixmap(image_path)
+            
+            if self._cached_pixmap and not self._cached_pixmap.isNull():
+                painter.drawPixmap(rect.toRect(), self._cached_pixmap)
+            else:
+                self._draw_image_placeholder(painter, rect, "Video Preview")
         
         elif elem_type == ElementType.IMAGE:
             # Draw actual image if path is set
@@ -1654,13 +1769,16 @@ class ElementItem(QGraphicsObject):
         
         self._cached_image_path = image_path
         
-        # Try to resolve the path
+        # Resolve the path
+        theme_folder = getattr(self._model, 'theme_folder', None)
         path = Path(image_path)
+        
         if not path.is_absolute():
-            # Try relative to theme folder
-            theme_folder = getattr(self._model, 'theme_folder', None)
             if theme_folder:
                 path = Path(theme_folder) / image_path
+            else:
+                # Fallback to current working directory or original path
+                pass
         
         if path.exists():
             self._cached_pixmap = QPixmap(str(path))
@@ -1672,7 +1790,7 @@ class ElementItem(QGraphicsObject):
                     self._element.height = self._cached_pixmap.height()
                     self.setRect(0, 0, self._element.width, self._element.height)
         else:
-            logger.warning(f"Image not found: {path}")
+            logger.warning(f"Image not found: {path} (original: {image_path})")
             self._cached_pixmap = None
     
     def _draw_image_placeholder(self, painter: QPainter, rect: QRectF, label: str) -> None:
@@ -1800,7 +1918,12 @@ class ElementItem(QGraphicsObject):
         self.setTransformOriginPoint(self.rect().center())
         self.setRotation(self._element.angle)
         self.setOpacity(self._element.opacity)
-        self.setVisible(self._element.visible)
+        
+        # Background video visibility depends on 'enabled' flag
+        if isinstance(self._element, BackgroundVideoElement):
+            self.setVisible(self._element.visible and self._element.enabled)
+        else:
+            self.setVisible(self._element.visible)
         
         self.update()  # Trigger repaint
 

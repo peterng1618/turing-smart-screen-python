@@ -24,7 +24,8 @@ from PyQt6.QtGui import QUndoStack
 from theme_editor.models.element import (
     Element, ElementType, create_element,
     RectangleElement, CircleElement, TriangleElement, LineElement,
-    TextElement, ImageElement, IconElement, GroupElement, DynamicTextElement
+    TextElement, ImageElement, IconElement, GroupElement, DynamicTextElement,
+    BackgroundImageElement, BackgroundVideoElement
 )
 
 logger = logging.getLogger(__name__)
@@ -361,8 +362,19 @@ class ThemeModel(QAbstractItemModel):
             element_id: ID of element to remove
             
         Returns:
-            Removed element, or None if not found
+            Removed element, or None if not found or protected
         """
+        # Check if element exists first
+        element = self._elements.get(element_id)
+        if not element:
+            return None
+        
+        # Prevent removal of background layers
+        if isinstance(element, (BackgroundImageElement, BackgroundVideoElement)):
+            logger.debug(f"Cannot remove protected element: {element.name}")
+            return None
+        
+        # Now remove from dict
         element = self._elements.pop(element_id, None)
         if not element:
             return None
@@ -539,13 +551,20 @@ class ThemeModel(QAbstractItemModel):
         """
         self.clear()
         self._theme_name = name
+        self._theme_path = Path(__file__).parent.parent.parent / "res" / "themes" / name
         
-        # Add default background group
-        bg_group = create_element(
-            ElementType.GROUP,
-            name="Background"
+        # Add background layers first (bottom of layer stack)
+        bg_video = create_element(
+            ElementType.BACKGROUND_VIDEO,
+            name="Background Video"
         )
-        self.add_element(bg_group)
+        self.add_element(bg_video)
+        
+        bg_image = create_element(
+            ElementType.BACKGROUND_IMAGE,
+            name="Background Image"
+        )
+        self.add_element(bg_image)
         
         # Add UI Elements group
         ui_group = create_element(
@@ -563,15 +582,23 @@ class ThemeModel(QAbstractItemModel):
         
         logger.info(f"Created new theme: {name}")
     
-    def load_from_data(self, data: Dict[str, Any]) -> None:
+    def load_from_data(self, data: Dict[str, Any], theme_path: Optional[Path] = None) -> None:
         """
         Load theme from parsed YAML data.
         
         Args:
             data: Theme data dictionary
+            theme_path: Optional explicit path to theme directory
         """
         self.clear()
         
+        if theme_path:
+            self._theme_path = theme_path
+            self._theme_name = theme_path.name
+        elif not self._theme_path and self._theme_name:
+            # Fallback path resolution
+            self._theme_path = Path(__file__).parent.parent.parent / "res" / "themes" / self._theme_name
+            
         # Load guides
         guides = data.get("editor_guides", {})
         self._guides_h = guides.get("horizontal", [])
@@ -587,32 +614,124 @@ class ThemeModel(QAbstractItemModel):
         else:
             self._display_rgb_led = tuple(led)
         
-        # Load background
-        background = data.get("background", {})
-        if background:
-            self._background_type = background.get("type", "image")
-            self._background_path = background.get("path", "background.png")
-            if self._background_type == "video":
-                self._video_config = background.get("video", {})
+        # Load all elements
+        # We handle nested structures (groups) by using the parent_id
+        main_ui_elements = data.get("ui_elements", [])
+        main_dynamic_elements = data.get("dynamic_elements", [])
         
-        # Create Background group
-        bg_group = create_element(ElementType.GROUP, name="Background")
-        self.add_element(bg_group)
+        # 1. Create top-level groups if not present in data
+        ui_group = None
+        dynamic_group = None
         
-        # Load UI elements
-        ui_group = create_element(ElementType.GROUP, name="UI Elements")
-        self.add_element(ui_group)
+        # Check if they already exist in data
+        for elem_data in main_ui_elements:
+            if elem_data.get("type") == "group" and elem_data.get("name") == "UI Elements":
+                ui_group = self._parse_element(elem_data)
+                if ui_group:
+                    self.add_element(ui_group)
+                break
         
-        for elem_data in data.get("ui_elements", []):
+        if not ui_group:
+            ui_group = create_element(ElementType.GROUP, name="UI Elements")
+            self.add_element(ui_group)
+            
+        for elem_data in main_dynamic_elements:
+            if elem_data.get("type") == "group" and elem_data.get("name") == "Dynamic Elements":
+                dynamic_group = self._parse_element(elem_data)
+                if dynamic_group:
+                    self.add_element(dynamic_group)
+                break
+        
+        if not dynamic_group:
+            dynamic_group = create_element(ElementType.GROUP, name="Dynamic Elements")
+            self.add_element(dynamic_group)
+            
+        # 2. Ensure Background layers exist
+        # We look for them in the existing data or create defaults
+        bg_video_data = None
+        bg_image_data = None
+        
+        # Look for existing background elements in the ui_elements list
+        for elem_data in main_ui_elements:
+            etype = elem_data.get("type")
+            if etype == "background_video":
+                bg_video_data = elem_data
+            elif etype == "background_image":
+                bg_image_data = elem_data
+        
+        # Create or update Background Video layer
+        if bg_video_data:
+            bg_video = self._parse_element(bg_video_data)
+        else:
+            # Fallback to legacy root keys (v1 format or older v2)
+            video_bg_legacy = data.get("video_background", {})
+            bg_video = create_element(
+                ElementType.BACKGROUND_VIDEO,
+                name="Background Video",
+                enabled=video_bg_legacy.get("ENABLE", False),
+                source_path=video_bg_legacy.get("SOURCE_PATH", ""),
+                rotation=video_bg_legacy.get("ROTATE", 0),
+                start_offset=video_bg_legacy.get("START_OFFSET", "00:00"),
+                duration=video_bg_legacy.get("DURATION", ""),
+                loop_fade_duration=float(video_bg_legacy.get("LOOP_FADE_DURATION", 0.0)),
+            )
+        self.add_element(bg_video, index=0)
+        
+        # Create or update Background Image layer
+        if bg_image_data:
+            bg_image = self._parse_element(bg_image_data)
+        else:
+            bg_legacy = data.get("background", {})
+            bg_image = create_element(
+                ElementType.BACKGROUND_IMAGE,
+                name="Background Image",
+                path=bg_legacy.get("path", "background.png"),
+            )
+        self.add_element(bg_image, index=1)
+        
+        # Store legacy background info for compatibility
+        if bg_image and hasattr(bg_image, 'path'):
+            self._background_path = bg_image.path
+        if bg_video and bg_video.enabled:
+            self._background_type = "video"
+        else:
+            self._background_type = "image"
+
+        # 3. Load remaining elements from data
+        # Skipping the singletons we already handled
+        handled_ids = set()
+        for obj in [bg_video, bg_image, ui_group, dynamic_group]:
+            if obj and hasattr(obj, 'id'):
+                handled_ids.add(obj.id)
+        
+        handled_types = {"background_video", "background_image"}
+        
+        for elem_data in main_ui_elements:
+            eid = elem_data.get("id")
+            etype = elem_data.get("type")
+            
+            # Skip handled singletons by ID or Type
+            if (eid and eid in handled_ids) or etype in handled_types:
+                continue
+            
+            if etype == "group" and elem_data.get("name") == "UI Elements":
+                continue
+                 
             element = self._parse_element(elem_data)
             if element:
                 self.add_element(element, parent_id=ui_group.id)
-        
-        # Load dynamic elements
-        dynamic_group = create_element(ElementType.GROUP, name="Dynamic Elements")
-        self.add_element(dynamic_group)
-        
-        for elem_data in data.get("dynamic_elements", []):
+            
+        for elem_data in main_dynamic_elements:
+            eid = elem_data.get("id")
+            etype = elem_data.get("type")
+            
+            # Skip handled singletons
+            if (eid and eid in handled_ids) or etype in handled_types:
+                continue
+                
+            if etype == "group" and elem_data.get("name") == "Dynamic Elements":
+                continue
+                
             element = self._parse_element(elem_data)
             if element:
                 self.add_element(element, parent_id=dynamic_group.id)
@@ -635,6 +754,11 @@ class ThemeModel(QAbstractItemModel):
             "icon": ElementType.ICON,
             "group": ElementType.GROUP,
             "dynamic_text": ElementType.DYNAMIC_TEXT,
+            "graph": ElementType.GRAPH,
+            "radial": ElementType.RADIAL,
+            "line_graph": ElementType.LINE_GRAPH,
+            "background_image": ElementType.BACKGROUND_IMAGE,
+            "background_video": ElementType.BACKGROUND_VIDEO,
         }
         
         element_type = type_map.get(elem_type)
@@ -717,6 +841,11 @@ class ThemeModel(QAbstractItemModel):
         }
         w, h = sizes.get(self._display_size, (480, 800))
         return h if self._display_orientation == "portrait" else w
+
+    @property
+    def theme_folder(self) -> Optional[Path]:
+        """Get the current theme directory."""
+        return self._theme_path
 
     # --- Guides ---
     

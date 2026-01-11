@@ -816,11 +816,19 @@ class UiRenderer:
         
         canvas.alpha_composite(img, (int(x), int(y)))
 
-    def generate_overlay(self):
+    def generate_overlay(self, exclude_types=None):
+        """
+        Generate a static UI overlay image from elements.
+        
+        :param exclude_types: List of element types to exclude from rendering (e.g. ['background_video'])
+        """
         overlay = Image.new('RGBA', (self.width, self.height), (0, 0, 0, 0))
         ui_elements = self.theme_data.get('ui_elements', [])
         
-        # Ensure it's a list (backward compatibility if user still uses dict structure might be nice)
+        if exclude_types is None:
+            exclude_types = []
+            
+        # Ensure it's a list (backward compatibility if user still uses dict structure)
         if isinstance(ui_elements, dict):
             flat_list = []
             for shape in ui_elements.get('shapes', []):
@@ -840,6 +848,9 @@ class UiRenderer:
         # Process Queue Linear
         for config_item in ui_elements:
             elem_type = config_item.get('type')
+            
+            if elem_type in exclude_types:
+                continue
             
             if elem_type in ('rectangle', 'ellipse', 'circle', 'line', 'triangle'):
                 img, (x, y) = self.draw_shape_to_image(config_item)

@@ -143,7 +143,7 @@ tmp
 external/LibreHardwareMonitor/LibreHardwareMonitorLib.sys
 
 # New theme engine testing
-res/themes/NZXT_color_ui/
+#res/themes/NZXT_color_ui/
 res/themes/Vantic
 test_render_nzxt.py
 

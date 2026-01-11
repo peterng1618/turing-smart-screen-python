@@ -24,7 +24,8 @@ from theme_editor.models.theme_model import ThemeModel
 from theme_editor.models.element import (
     Element, ElementType, Shadow, Outline,
     RectangleElement, CircleElement, TriangleElement, LineElement,
-    TextElement, ImageElement, IconElement, GroupElement, DynamicTextElement
+    TextElement, ImageElement, IconElement, GroupElement, DynamicTextElement,
+    BackgroundImageElement, BackgroundVideoElement
 )
 
 logger = logging.getLogger(__name__)
@@ -196,21 +197,29 @@ class PropertiesPanel(QWidget):
         
         # Add property groups based on element type
         self._add_identity_group(element)
+        
+        # Transform and Appearance
         self._add_transform_group(element)
         self._add_appearance_group(element)
+        
+        # Background-specific properties
+        if isinstance(element, BackgroundImageElement):
+            self._add_background_image_group(element)
+        elif isinstance(element, BackgroundVideoElement):
+            self._add_background_video_group(element)
         
         # Type-specific properties
         if isinstance(element, TextElement) or isinstance(element, DynamicTextElement):
             self._add_typography_group(element)
-        
-        if isinstance(element, ImageElement):
-            self._add_image_group(element)
-        
-        if isinstance(element, IconElement):
-            self._add_icon_group(element)
-        
-        if isinstance(element, DynamicTextElement):
-            self._add_sensor_group(element)
+            
+            if isinstance(element, ImageElement):
+                self._add_image_group(element)
+            
+            if isinstance(element, IconElement):
+                self._add_icon_group(element)
+            
+            if isinstance(element, DynamicTextElement):
+                self._add_sensor_group(element)
         
         # Stretch at bottom
         self._content_layout.addStretch()
@@ -575,6 +584,22 @@ class PropertiesPanel(QWidget):
             )
             form.addRow("Align:", align_combo)
             self._widgets["align"] = align_combo
+            
+        # Anchor (Pillow style)
+        if hasattr(element, 'anchor'):
+            anchor_combo = QComboBox()
+            # Common Pillow anchors: 
+            # Horizontal: l (left), m (middle), r (right)
+            # Vertical: t (top, baseline), m (middle), b (bottom), a (ascender), d (descender)
+            # We'll stick to common ones for now
+            anchors = ["lt", "lm", "lb", "mt", "mm", "mb", "rt", "rm", "rb"]
+            anchor_combo.addItems(anchors)
+            anchor_combo.setCurrentText(element.anchor)
+            anchor_combo.currentTextChanged.connect(
+                lambda v: self._on_property_changed("anchor", v)
+            )
+            form.addRow("Anchor:", anchor_combo)
+            self._widgets["anchor"] = anchor_combo
         
         self._content_layout.addWidget(group)
     
@@ -677,6 +702,118 @@ class PropertiesPanel(QWidget):
         
         self._content_layout.addWidget(group)
     
+    def _add_background_image_group(self, element: 'BackgroundImageElement') -> None:
+        """Add background image properties group."""
+        group = QGroupBox("Background Image Settings")
+        layout = QVBoxLayout(group)
+        
+        # Source path with browse
+        path_layout = QHBoxLayout()
+        path_label = QLabel("Source:")
+        path_label.setFixedWidth(50)
+        path_layout.addWidget(path_label)
+        
+        path_edit = QLineEdit(element.path if element.path else "background.png")
+        path_edit.setReadOnly(True)
+        path_edit.setStyleSheet("background: #333;")
+        path_layout.addWidget(path_edit, 1)
+        self._widgets["bg_path"] = path_edit
+        
+        browse_btn = QPushButton("...")
+        browse_btn.setFixedWidth(32)
+        browse_btn.clicked.connect(self._pick_background_image)
+        path_layout.addWidget(browse_btn)
+        layout.addLayout(path_layout)
+        
+        self._content_layout.addWidget(group)
+    
+    def _add_background_video_group(self, element: 'BackgroundVideoElement') -> None:
+        """Add background video properties group."""
+        group = QGroupBox("Background Video Settings")
+        layout = QVBoxLayout(group)
+        
+        # Enabled toggle
+        enabled_check = QCheckBox("Enabled")
+        enabled_check.setChecked(element.enabled)
+        enabled_check.toggled.connect(lambda v: self._on_property_changed("enabled", v))
+        layout.addWidget(enabled_check)
+        self._widgets["enabled"] = enabled_check
+        
+        # Source path with browse
+        path_layout = QHBoxLayout()
+        path_label = QLabel("Source:")
+        path_label.setFixedWidth(50)
+        path_layout.addWidget(path_label)
+        
+        path_edit = QLineEdit(element.source_path if element.source_path else "(no video)")
+        path_edit.setReadOnly(True)
+        path_edit.setStyleSheet("background: #333;")
+        path_layout.addWidget(path_edit, 1)
+        self._widgets["source_path_label"] = path_edit
+        
+        browse_btn = QPushButton("...")
+        browse_btn.setFixedWidth(32)
+        browse_btn.clicked.connect(self._pick_background_video)
+        path_layout.addWidget(browse_btn)
+        layout.addLayout(path_layout)
+        
+        # Video Processing section
+        processing_group = QGroupBox("Video Processing")
+        proc_form = QFormLayout(processing_group)
+        
+        # Start Offset (mm:ss)
+        start_edit = QLineEdit(element.start_offset)
+        start_edit.setPlaceholderText("00:00")
+        start_edit.textChanged.connect(lambda v: self._on_property_changed("start_offset", v))
+        proc_form.addRow("Start Offset:", start_edit)
+        self._widgets["start_offset"] = start_edit
+        
+        # Duration
+        duration_edit = QLineEdit(element.duration)
+        duration_edit.setPlaceholderText("(full video)")
+        duration_edit.textChanged.connect(lambda v: self._on_property_changed("duration", v))
+        proc_form.addRow("Duration:", duration_edit)
+        self._widgets["duration"] = duration_edit
+        
+        # Loop Fade
+        fade_spin = QDoubleSpinBox()
+        fade_spin.setRange(0.0, 10.0)
+        fade_spin.setSingleStep(0.5)
+        fade_spin.setValue(element.loop_fade_duration)
+        fade_spin.setSuffix(" sec")
+        fade_spin.valueChanged.connect(lambda v: self._on_property_changed("loop_fade_duration", v))
+        proc_form.addRow("Loop Fade:", fade_spin)
+        self._widgets["loop_fade_duration"] = fade_spin
+        
+        layout.addWidget(processing_group)
+        self._content_layout.addWidget(group)
+    
+    def _pick_background_image(self) -> None:
+        """Open file dialog to select a background image."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Background Image",
+            "",
+            "Image Files (*.png *.jpg *.jpeg);;All Files (*)"
+        )
+        if file_path:
+            self._on_property_changed("path", file_path)
+            if "bg_path" in self._widgets:
+                self._widgets["bg_path"].setText(file_path)
+    
+    def _pick_background_video(self) -> None:
+        """Open file dialog to select a background video."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Background Video",
+            "",
+            "Video Files (*.mp4 *.webm *.mov *.avi);;All Files (*)"
+        )
+        if file_path:
+            self._on_property_changed("source_path", file_path)
+            if "source_path_label" in self._widgets:
+                self._widgets["source_path_label"].setText(file_path)
+    
     def _add_shadow_group(self, element: Element) -> None:
         """Add shadow properties group."""
         if not element.shadow:
@@ -769,50 +906,117 @@ class PropertiesPanel(QWidget):
         interval_layout.addWidget(interval_label)
         interval_layout.addWidget(interval_spin, 1)
         layout.addLayout(interval_layout)
-        
+
+        # Force Static row
+        force_static_check = QCheckBox("Force Static Width/Height")
+        force_static_check.setToolTip("If checked, width/height are fixed and won't auto-resize to fit text content.")
+        force_static_check.setChecked(getattr(element, 'force_static', False))
+        force_static_check.toggled.connect(lambda v: self._on_property_changed("force_static", v))
+        layout.addWidget(force_static_check)
+        self._widgets["force_static"] = force_static_check
+
         # Available sensors label
-        sensors_label = QLabel("Insert Sensor (click to add):")
+        sensors_label = QLabel("Insert Sensor (Click button to add):")
         sensors_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 8px;")
         layout.addWidget(sensors_label)
         
-        # Available sensor variables - organized by category: (sensor_id, display_label)
-        sensors = [
-            ("CPU", [("CPU_PERCENTAGE", "PERCENT"), ("CPU_TEMPERATURE", "TEMP"), ("CPU_FREQUENCY", "FREQ")]),
-            ("GPU", [("GPU_PERCENTAGE", "PERCENT"), ("GPU_TEMPERATURE", "TEMP"), ("GPU_MEMORY_USED", "USED"), ("GPU_FPS", "FPS")]),
-            ("Memory", [("MEM_VIRTUAL_PERCENT", "PERCENT"), ("MEM_VIRTUAL_USED", "USED"), ("MEM_VIRTUAL_TOTAL", "TOTAL")]),
-            ("Disk", [("DISK_USED_PERCENT", "PERCENT"), ("DISK_USED", "USED"), ("DISK_TOTAL", "TOTAL")]),
-            ("Network", [("NET_DOWNLOAD_RATE", "DOWN"), ("NET_UPLOAD_RATE", "UP")]),
-            ("Time", [("DATE_DAY", "DAY"), ("DATE_HOUR", "HOUR"), ("UPTIME_FORMATTED", "UPTIME")]),
+        # Comprehensive sensor list with all flag variants
+        # (Category, [(sensor_id, label, [flags])])
+        sensor_configs = [
+            ("CPU", [
+                ("CPU.PERCENTAGE", "Load", ["u", "nu", "r"]),
+                ("CPU.TEMPERATURE", "Temp", ["u", "nu", "r"]),
+                ("CPU.FREQUENCY", "Freq", ["u", "nu", "r"]),
+            ]),
+            ("GPU", [
+                ("GPU.PERCENTAGE", "Load", ["u", "nu", "r"]),
+                ("GPU.TEMPERATURE", "Temp", ["u", "nu", "r"]),
+                ("GPU.MEMORY.PERCENTAGE", "Mem%", ["u", "nu", "r"]),
+                ("GPU.FPS", "FPS", ["u", "r"]),
+            ]),
+            ("RAM", [
+                ("MEMORY.VIRTUAL.PERCENTAGE", "Virt%", ["u", "nu", "r"]),
+                ("MEMORY.VIRTUAL.USED", "Used", ["u", "nu", "r"]),
+                ("MEMORY.SWAP.PERCENTAGE", "Swap%", ["u", "nu", "r"]),
+            ]),
+            ("Disk", [
+                ("DISK.PERCENTAGE", "Use%", ["u", "nu", "r"]),
+                ("DISK.USED", "Used", ["u", "nu", "r"]),
+                ("DISK.FREE", "Free", ["u", "nu", "r"]),
+            ]),
+            ("Net", [
+                ("NET.DOWNLOAD.RATE", "Down", ["u", "nu", "r"]),
+                ("NET.UPLOAD.RATE", "Up", ["u", "nu", "r"]),
+            ]),
+            ("Date", [
+                ("DATE.DAY", "Day", ["short", "medium", "long", "full"]),
+                ("DATE.HOUR", "Time", ["short", "medium", "long", "full"]),
+            ]),
+            ("Sys", [
+                ("UPTIME", "Uptime", ["FORMATTED", "SECONDS"]),
+                ("WEATHER.TEMPERATURE", "Weather", ["u", "nu"]),
+            ]),
         ]
         
-        for category, sensor_list in sensors:
-            cat_layout = QHBoxLayout()
-            cat_label = QLabel(f"{category}:")
-            cat_label.setStyleSheet("color: #666; font-size: 9px; min-width: 50px;")
-            cat_layout.addWidget(cat_label)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setMaximumHeight(200)
+        sensors_container = QWidget()
+        sensors_layout = QVBoxLayout(sensors_container)
+        sensors_layout.setContentsMargins(0, 0, 0, 0)
+        sensors_layout.setSpacing(2)
+        
+        for category, list_items in sensor_configs:
+            cat_group = QWidget()
+            cat_vbox = QVBoxLayout(cat_group)
+            cat_vbox.setContentsMargins(0, 5, 0, 2)
+            cat_vbox.setSpacing(1)
             
-            for sensor_id, label in sensor_list:
-                btn = QPushButton(label)
-                btn.setToolTip(f"Insert {{{sensor_id}:u}}")
-                btn.setFixedHeight(20)
-                btn.setStyleSheet("font-size: 9px; padding: 2px 4px;")
-                # Use a helper function to capture sensor value properly
-                def make_handler(sid):
-                    return lambda: self._insert_sensor(sid)
-                btn.clicked.connect(make_handler(sensor_id))
-                cat_layout.addWidget(btn)
+            cat_title = QLabel(category)
+            cat_title.setStyleSheet("font-weight: bold; color: #AAA; font-size: 9px;")
+            cat_vbox.addWidget(cat_title)
             
-            cat_layout.addStretch()
-            layout.addLayout(cat_layout)
+            for sensor_id, label, flags in list_items:
+                btn_row = QHBoxLayout()
+                btn_row.setSpacing(2)
+                
+                label_lbl = QLabel(label)
+                label_lbl.setFixedWidth(40)
+                label_lbl.setStyleSheet("color: #888; font-size: 9px;")
+                btn_row.addWidget(label_lbl)
+                
+                for flag in flags:
+                    btn = QPushButton(flag)
+                    btn.setToolTip(f"Insert {{{sensor_id}:{flag}}}")
+                    btn.setFixedHeight(18)
+                    btn.setStyleSheet("font-size: 8px; padding: 1px 2px; min-width: 35px;")
+                    
+                    # Tooltip check for UPTIME special case
+                    if sensor_id == "UPTIME" and flag == "FORMATTED":
+                         btn.setToolTip("{UPTIME:FORMATTED} (e.g. 2 days, 15:33)")
+                    
+                    def make_handler(sid, f):
+                        return lambda: self._insert_sensor(sid, f)
+                    btn.clicked.connect(make_handler(sensor_id, flag))
+                    btn_row.addWidget(btn)
+                
+                btn_row.addStretch()
+                cat_vbox.addLayout(btn_row)
+            
+            sensors_layout.addWidget(cat_group)
+        
+        sensors_layout.addStretch()
+        scroll_area.setWidget(sensors_container)
+        layout.addWidget(scroll_area)
         
         self._content_layout.addWidget(group)
     
-    def _insert_sensor(self, sensor_id: str) -> None:
+    def _insert_sensor(self, sensor_id: str, flag: str = "u") -> None:
         """Insert a sensor placeholder into the text field."""
         if "text" in self._widgets:
             text_edit = self._widgets["text"]
             current = text_edit.text()
-            placeholder = f"{{{sensor_id}:u}}"
+            placeholder = f"{{{sensor_id}:{flag}}}"
             # Insert at cursor position or end
             cursor_pos = text_edit.cursorPosition()
             new_text = current[:cursor_pos] + placeholder + current[cursor_pos:]

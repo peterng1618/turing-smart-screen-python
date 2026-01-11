@@ -1,0 +1,10 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.0.2, pluggy-1.6.0
+PyQt6 6.10.2 -- Qt runtime 6.10.1 -- Qt compiled 6.10.0
+rootdir: D:\git-repos\turing-smart-screen-python
+plugins: qt-4.5.0
+collected 35 items
+
+tests\theme_editor\test_element.py ...................................   [100%]
+
+============================= 35 passed in 0.07s ==============================

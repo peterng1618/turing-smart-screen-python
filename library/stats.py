@@ -133,6 +133,7 @@ def display_themed_value(theme_data, value, min_size=0, unit='', sensor_id=None)
         background_image=get_theme_file_path(theme_data.get("BACKGROUND_IMAGE", None)),
         align=theme_data.get("ALIGN", "left"),
         anchor=theme_data.get("ANCHOR", "lt"),
+        opacity=theme_data.get("OPACITY", 1.0),
     )
 
 
@@ -748,17 +749,21 @@ class Net:
         Net._show_themed_total_data(net_theme_data['ETH']['DOWNLOADED']['TEXT'], downloaded_eth)
         display_themed_line_graph(net_theme_data['ETH']['DOWNLOAD']['LINE_GRAPH'], cls.last_values_eth_download)
 
-        display_themed_value(
-            theme_data=theme_data,
-            value=f"{bytes2human(amount)}",
-            min_size=6,
-            sensor_id=theme_data.get("SENSOR_ID") # For Net, we might need theme-defined IDs or specific ones
-        )
-
+    @staticmethod
+    def _show_themed_tax_rate(theme_data, rate):
         display_themed_value(
             theme_data=theme_data,
             value=f"{bytes2human(rate, '%(value).1f %(symbol)s/s')}",
             min_size=10,
+            sensor_id=theme_data.get("SENSOR_ID")
+        )
+
+    @staticmethod
+    def _show_themed_total_data(theme_data, amount):
+        display_themed_value(
+            theme_data=theme_data,
+            value=f"{bytes2human(amount)}",
+            min_size=6,
             sensor_id=theme_data.get("SENSOR_ID")
         )
 
@@ -1020,14 +1025,45 @@ class DynamicText:
                 flag = parts[1] if len(parts) > 1 else None
                 
                 value = ""
-                if flag == 'nu':
-                    value = str(config.STATS_VALUES.get(f"{sensor_id}_RAW", f"{{{placeholder}}}"))
-                elif flag == 'u':
-                    value = str(config.STATS_VALUES.get(sensor_id, f"{{{placeholder}}}"))
-                elif flag == 'r':
-                    value = str(config.STATS_RAW.get(sensor_id, f"{{{placeholder}}}"))
-                else:
-                    value = str(config.STATS_VALUES.get(sensor_id, f"{{{placeholder}}}"))
+                # Date and Uptime formatting flags
+                if sensor_id.startswith("DATE.") and flag in ('short', 'medium', 'long', 'full') or (flag and '%' in flag):
+                    raw_val = config.STATS_RAW.get(sensor_id)
+                    if isinstance(raw_val, (int, float)):
+                        dt = datetime.datetime.fromtimestamp(raw_val)
+                        if flag in ('short', 'medium', 'long', 'full'):
+                            b_locale = locale.getlocale()[0]
+                            try:
+                                value = babel.dates.format_datetime(dt, format=flag, locale=b_locale)
+                            except:
+                                value = babel.dates.format_datetime(dt, format=flag, locale='en')
+                        else:
+                            value = dt.strftime(flag)
+                elif sensor_id == "UPTIME" and flag in ('FORMATTED', 'SECONDS'):
+                    raw_val = config.STATS_RAW.get("UPTIME")
+                    if isinstance(raw_val, (int, float)):
+                        if flag == 'SECONDS':
+                            value = str(int(raw_val))
+                        else:
+                            # Use uptime library-like formatting or simple d, h:m:s
+                            d = int(raw_val // 86400)
+                            h = int((raw_val % 86400) // 3600)
+                            m = int((raw_val % 3600) // 60)
+                            s = int(raw_val % 60)
+                            if d > 0:
+                                value = f"{d} days, {h:02d}:{m:02d}:{s:02d}"
+                            else:
+                                value = f"{h:02d}:{m:02d}:{s:02d}"
+                
+                # Standard flags
+                if not value:
+                    if flag == 'nu':
+                        value = str(config.STATS_VALUES.get(f"{sensor_id}_RAW", config.STATS_VALUES.get(sensor_id, f"{{{placeholder}}}")))
+                    elif flag == 'u':
+                        value = str(config.STATS_VALUES.get(sensor_id, f"{{{placeholder}}}"))
+                    elif flag == 'r':
+                        value = str(config.STATS_RAW.get(sensor_id, f"{{{placeholder}}}"))
+                    else:
+                        value = str(config.STATS_VALUES.get(sensor_id, f"{{{placeholder}}}"))
                 
                 resolved_text = resolved_text.replace(f"{{{placeholder}}}", value)
 

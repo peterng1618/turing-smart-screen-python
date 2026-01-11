@@ -17,7 +17,8 @@ class ElementType(Enum):
     """Types of elements that can be added to a theme."""
     # Container types
     GROUP = auto()
-    BACKGROUND = auto()
+    BACKGROUND_IMAGE = auto()
+    BACKGROUND_VIDEO = auto()
     
     # Shape types
     RECTANGLE = auto()
@@ -343,6 +344,7 @@ class DynamicTextElement(Element):
     align: str = "left"
     anchor: str = "lt"
     interval: float = 1.0
+    force_static: bool = False
     
     def to_dict(self) -> Dict[str, Any]:
         data = super().to_dict()
@@ -355,7 +357,10 @@ class DynamicTextElement(Element):
         data["font"] = self.font
         data["font_size"] = self.font_size
         data["color"] = f"{self.color[0]}, {self.color[1]}, {self.color[2]}, {self.color[3]}"
+        data["align"] = self.align
+        data["anchor"] = self.anchor
         data["interval"] = self.interval
+        data["force_static"] = self.force_static
         return data
 
 
@@ -454,6 +459,61 @@ class LineGraphElement(Element):
         return data
 
 
+@dataclass
+class BackgroundImageElement(Element):
+    """Background image element (always locked, non-selectable on canvas)."""
+    element_type: ElementType = field(default=ElementType.BACKGROUND_IMAGE, init=False)
+    path: str = "background.png"
+    
+    def __post_init__(self):
+        # Always locked and visible
+        self.locked = True
+        self.visible = True
+        if not self.name:
+            self.name = "Background Image"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        data = super().to_dict()
+        data.update({
+            "type": "background_image",
+            "path": self.path,
+        })
+        return data
+        return data
+
+
+@dataclass
+class BackgroundVideoElement(Element):
+    """Background video element (always locked, non-selectable on canvas)."""
+    element_type: ElementType = field(default=ElementType.BACKGROUND_VIDEO, init=False)
+    enabled: bool = False
+    source_path: str = ""  # Original video path
+    # Video processing options
+    start_offset: str = "00:00"  # mm:ss format
+    duration: str = ""  # Empty = full video
+    loop_fade_duration: float = 0.0  # Seconds for crossfade loop
+    
+    def __post_init__(self):
+        # Always locked and visible
+        self.locked = True
+        self.visible = True
+        if not self.name:
+            self.name = "Background Video"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        data = super().to_dict()
+        data.update({
+            "type": "background_video",
+            "enabled": self.enabled,
+            "source_path": self.source_path,
+            "start_offset": self.start_offset,
+            "loop_fade_duration": self.loop_fade_duration,
+        })
+        if self.duration:
+            data["duration"] = self.duration
+        return data
+
+
 # Factory function to create elements from type
 ELEMENT_CLASSES = {
     ElementType.RECTANGLE: RectangleElement,
@@ -468,6 +528,8 @@ ELEMENT_CLASSES = {
     ElementType.GRAPH: GraphElement,
     ElementType.RADIAL: RadialElement,
     ElementType.LINE_GRAPH: LineGraphElement,
+    ElementType.BACKGROUND_IMAGE: BackgroundImageElement,
+    ElementType.BACKGROUND_VIDEO: BackgroundVideoElement,
 }
 
 
@@ -485,10 +547,77 @@ def create_element(element_type: ElementType, **kwargs) -> Element:
     element_class = ELEMENT_CLASSES.get(element_type, Element)
     element = element_class()
     
-    # Apply kwargs
+    # Apply kwargs with type conversion
     for key, value in kwargs.items():
-        if hasattr(element, key):
-            setattr(element, key, value)
+        if not hasattr(element, key):
+            continue
+            
+        # Handle Shadow object conversion
+        if key == "shadow" and isinstance(value, dict):
+            color = value.get("color", "0, 0, 0, 128")
+            parsed_color = (0, 0, 0, 128) # Default
+            
+            if isinstance(color, str):
+                try:
+                    parts = tuple(int(c.strip()) for c in color.split(","))
+                    parsed_color = parts + (255,) if len(parts) == 3 else parts
+                except ValueError:
+                    pass
+            elif isinstance(color, (list, tuple)):
+                parsed_color = tuple(color)
+                if len(parsed_color) == 3:
+                    parsed_color = parsed_color + (255,)
+                
+            shadow = Shadow(
+                blur=value.get("blur", 5),
+                color=parsed_color,
+                offset_x=value.get("offset_x", 3),
+                offset_y=value.get("offset_y", 3),
+            )
+            setattr(element, key, shadow)
+            continue
+            
+        # Handle Outline object conversion
+        if key == "outline" and isinstance(value, dict):
+            color = value.get("color", "255, 255, 255, 255")
+            parsed_color = (255, 255, 255, 255) # Default
+            
+            if isinstance(color, str):
+                try:
+                    parts = tuple(int(c.strip()) for c in color.split(","))
+                    parsed_color = parts + (255,) if len(parts) == 3 else parts
+                except ValueError:
+                    pass
+            elif isinstance(color, (list, tuple)):
+                parsed_color = tuple(color)
+                if len(parsed_color) == 3:
+                    parsed_color = parsed_color + (255,)
+                
+            outline = Outline(
+                width=value.get("width", 1),
+                color=parsed_color,
+                dash_array=value.get("dash_array"),
+                cap=value.get("cap", "butt"),
+            )
+            setattr(element, key, outline)
+            continue
+            
+        # Handle color conversion (str/list -> tuple)
+        if (key == "color" or key.endswith("_color")) and value is not None:
+            if isinstance(value, str):
+                try:
+                    # Parse "R, G, B, A" string
+                    value = tuple(int(c.strip()) for c in value.split(","))
+                    if len(value) == 3:
+                        value = value + (255,)
+                except ValueError:
+                    # Keep original value if parsing fails (e.g. invalid format)
+                    pass
+            elif isinstance(value, list):
+                value = tuple(value)
+        
+        # General assignment
+        setattr(element, key, value)
     
     # Auto-generate name if not provided
     if not element.name:

@@ -15,8 +15,12 @@ Examples:
 """
 
 import sys
+import os
 import argparse
 from pathlib import Path
+
+# Prevent library.config from loading default theme on import
+os.environ["SKIP_GLOBAL_THEME_LOAD"] = "1"
 
 # Add project root to path for library imports
 PROJECT_ROOT = Path(__file__).parent.resolve()

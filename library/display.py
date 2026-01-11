@@ -331,32 +331,10 @@ class Display:
                     width=config.THEME_DATA['static_images'][image].get("WIDTH", 0),
                     height=config.THEME_DATA['static_images'][image].get("HEIGHT", 0)
                 )
-
-        # Draw UI Elements (Shapes & Extra Images) using UiRenderer
-        # This allows the theme editor to preview them, and the actual display to show them 
-        # (if not using video baking, or as a fallback)
-        try:
-            from library.ui_renderer import UiRenderer
-            renderer = UiRenderer(config.THEME_DATA, config.THEME_DATA['PATH'])
-            overlay = renderer.generate_overlay()
-            
-            # Composite overlay onto screen_image
-            # screen_image is available in self.lcd for simulated/PIL usage
-            if hasattr(self.lcd, 'screen_image'):
-                # screen_image may be RGB; alpha_composite requires RGBA
-                if self.lcd.screen_image.mode == 'RGB':
-                    self.lcd.screen_image = self.lcd.screen_image.convert('RGBA')
-                self.lcd.screen_image.alpha_composite(overlay, (0, 0))
-                # Convert back to RGB for compatibility with rest of pipeline
-                self.lcd.screen_image = self.lcd.screen_image.convert('RGB')
-            # specific LCD implementations might handle this differently, but for now 
-            # we rely on the fact that most use PIL or we just write to the buffer.
-            # However, `DisplayBitmap` writes directly to device for some revisions.
-            # If we want to support this generally, we might need a dedicated method in LCD classes.
-            # For Theme Editor (which uses LcdSimulated -> screen_image), this alpha_composite works.
-            
-        except Exception as e:
-            logger.error(f"Error rendering UI elements: {e}")
+        
+        # NOTE: UI elements (shapes, icons, images from ui_elements) should be pre-baked
+        # to background.png or video by the Theme Editor's "Bake and Save" function.
+        # They are NOT rendered at runtime.
 
     def display_static_text(self):
         if config.THEME_DATA.get('static_text', False):
@@ -378,6 +356,7 @@ class Display:
                                                                                                None)),
                     align=config.THEME_DATA['static_text'][text].get("ALIGN", "left"),
                     anchor=config.THEME_DATA['static_text'][text].get("ANCHOR", "lt"),
+                    opacity=config.THEME_DATA['static_text'][text].get("OPACITY", 1.0),
                 )
 
 

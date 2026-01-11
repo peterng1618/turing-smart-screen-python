@@ -9,10 +9,10 @@ import numpy as np
 from pathlib import Path
 import sys
 
-# Add tools directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "tools"))
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from video_processor import (
+from theme_editor.utils.video_processor import (
     parse_time_string,
     apply_rotation,
     apply_flip,

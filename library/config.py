@@ -80,8 +80,9 @@ def check_theme_compatible(display_size: str):
             os._exit(0)
 
 
-# Load theme on import
-load_theme()
+# Load theme on import, unless skipped (by theme editor)
+if os.environ.get("SKIP_GLOBAL_THEME_LOAD") != "1":
+    load_theme()
 
 # Queue containing the serial requests to send to the screen
 update_queue = queue.Queue()

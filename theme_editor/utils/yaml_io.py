@@ -120,26 +120,44 @@ class ThemeYamlIO:
         """
         v2 = {
             "display": v1.get("display", {}),
-            "background": {},
             "ui_elements": [],
             "dynamic_elements": [],
         }
         
-        # Handle video background
+        # Handle video background (v1)
         video_bg = v1.get("video_background", {})
-        if video_bg.get("ENABLE", False):
-            v2["background"] = {
-                "type": "video",
-                "video": video_bg,
-            }
-        else:
-            # Check for background image in static_images
-            static_images = v1.get("static_images", {})
-            if "BACKGROUND" in static_images:
-                v2["background"] = {
-                    "type": "image",
-                    "path": static_images["BACKGROUND"].get("PATH", "background.png"),
-                }
+        eb_video = {
+            "type": "background_video",
+            "name": "Background Video",
+            "enabled": video_bg.get("ENABLE", False),
+            "source_path": video_bg.get("SOURCE_PATH", ""),
+            "x": video_bg.get("x", 0),
+            "y": video_bg.get("y", 0),
+            "width": video_bg.get("width", 0),
+            "height": video_bg.get("height", 0),
+            "angle": video_bg.get("ROTATE", 0),
+            "start_offset": video_bg.get("START_OFFSET", "00:00"),
+            "duration": video_bg.get("DURATION", ""),
+            "loop_fade_duration": video_bg.get("LOOP_FADE_DURATION", 1.0),
+            "locked": True,
+            "z_order": -500
+        }
+        v2["ui_elements"].append(eb_video)
+        
+        # Handle background image (v1)
+        static_images = v1.get("static_images", {})
+        bg_path = "background.png"
+        if "BACKGROUND" in static_images:
+            bg_path = static_images["BACKGROUND"].get("PATH", "background.png")
+            
+        eb_img = {
+            "type": "background_image",
+            "name": "Background Image",
+            "path": bg_path,
+            "locked": True,
+            "z_order": -99
+        }
+        v2["ui_elements"].append(eb_img)
         
         # Convert static_images to ui_elements (except BACKGROUND)
         for name, img_data in v1.get("static_images", {}).items():
@@ -180,6 +198,9 @@ class ThemeYamlIO:
                     parts.append(255)
                 element["color"] = f"{parts[0]}, {parts[1]}, {parts[2]}, {parts[3]}"
             
+            element["align"] = text_data.get("ALIGN", "left").lower()
+            element["anchor"] = text_data.get("ANCHOR", "lt").lower()
+            
             v2["ui_elements"].append(element)
         
         # Convert ui_elements (already in new format)
@@ -192,7 +213,12 @@ class ThemeYamlIO:
             if not isinstance(sensor_data, dict):
                 continue
             
+            # Special case: DATE might be at the top level or under STATS
             self._convert_stat_section(v2["dynamic_elements"], sensor_type, sensor_data)
+        
+        # Also check for DATE at top level (some themes do this)
+        if "DATE" in v1 and "DATE" not in stats:
+             self._convert_stat_section(v2["dynamic_elements"], "DATE", v1["DATE"])
         
         return v2
     
@@ -216,28 +242,45 @@ class ThemeYamlIO:
             if metric == "INTERVAL" or not isinstance(metric_data, dict):
                 continue
             
-            # Handle TEXT sub-element
-            if "TEXT" in metric_data:
-                text_cfg = metric_data["TEXT"]
-                if text_cfg.get("SHOW", False):
-                    element = {
-                        "type": "dynamic_text",
-                        "name": f"{sensor_type}_{metric}_TEXT",
-                        "text": f"{{{sensor_type}_{metric}:u}}",
-                        "sensor": f"{sensor_type}.{metric}",
-                        "x": text_cfg.get("X", 0),
-                        "y": text_cfg.get("Y", 0),
-                        "font": text_cfg.get("FONT", "roboto-mono/RobotoMono-Bold.ttf"),
-                        "font_size": text_cfg.get("FONT_SIZE", 16),
-                        "show_unit": text_cfg.get("SHOW_UNIT", True),
-                        "interval": interval,
-                    }
-                    
-                    color = text_cfg.get("FONT_COLOR", "255, 255, 255")
-                    if isinstance(color, str):
-                        element["color"] = color + ", 255"
-                    
-                    elements.append(element)
+            # Handle variations of TEXT sub-element
+            text_keys = ["TEXT", "PERCENT_TEXT", "DATA_TEXT", "NAME_TEXT", "VALUE_TEXT"]
+            for t_key in text_keys:
+                if t_key in metric_data:
+                    text_cfg = metric_data[t_key]
+                    if text_cfg.get("SHOW", False):
+                        # Construct appropriate sensor path and label
+                        sensor_path = f"{sensor_type}.{metric}"
+                        if t_key == "PERCENT_TEXT":
+                            sensor_path = f"{sensor_type}.{metric}" # Usually already points to percentage
+                        
+                        # Check if width/height are explicitly set (forced)
+                        width = text_cfg.get("WIDTH")
+                        height = text_cfg.get("HEIGHT")
+                        force_static = (width is not None or height is not None)
+                        
+                        element = {
+                            "type": "dynamic_text",
+                            "name": f"{sensor_type}_{metric}_{t_key}",
+                            "text": f"{{{sensor_path}:u}}",
+                            "sensor": sensor_path,
+                            "x": text_cfg.get("X", 0),
+                            "y": text_cfg.get("Y", 0),
+                            "width": width if width is not None else 0,
+                            "height": height if height is not None else 0,
+                            "force_static": force_static,
+                            "font": text_cfg.get("FONT", "roboto-mono/RobotoMono-Bold.ttf"),
+                            "font_size": text_cfg.get("FONT_SIZE", 16),
+                            "show_unit": text_cfg.get("SHOW_UNIT", True),
+                            "interval": interval,
+                            "align": text_cfg.get("ALIGN", "left"),
+                            "anchor": text_cfg.get("ANCHOR", "lt"),
+                        }
+                        
+                        color = text_cfg.get("FONT_COLOR", "255, 255, 255")
+                        if isinstance(color, str):
+                            element["color"] = color + ", 255"
+                        
+                        elements.append(element)
             
             # Handle GRAPH sub-element
             if "GRAPH" in metric_data:
@@ -428,62 +471,133 @@ class ThemeYamlIO:
     
     def _convert_v2_to_v1(self, v2: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Convert v2 theme data to legacy v1 format.
-        
-        Args:
-            v2: Theme data in v2 format
-            
-        Returns:
-            Theme data in v1 format
+        Convert v2 (editor) theme data to v1 (display engine) format.
         """
         v1 = {
             "display": v2.get("display", {}),
             "static_images": {},
             "static_text": {},
-            "ui_elements": [],
             "STATS": {},
+            "dynamic_text": {},
         }
         
-        # Handle background
-        bg = v2.get("background", {})
-        if bg.get("type") == "video":
-            v1["video_background"] = bg.get("video", {})
-            v1["video_background"]["ENABLE"] = True
-        elif bg.get("type") == "image":
-            v1["static_images"]["BACKGROUND"] = {
-                "PATH": bg.get("path", "background.png"),
-                "X": 0,
-                "Y": 0,
-            }
+        # Split elements into categories
+        ui_elements = v2.get("ui_elements", [])
+        dynamic_elements = v2.get("dynamic_elements", [])
         
-        # Convert ui_elements
-        for elem in v2.get("ui_elements", []):
-            elem_type = elem.get("type", "")
+        # Handle background elements and static images/text
+        for elem in ui_elements:
+            etype = elem.get("type")
+            name = elem.get("name", "Element")
             
-            if elem_type == "image":
-                v1["static_images"][elem.get("name", "IMAGE")] = {
+            if etype == "background_video":
+                if elem.get("enabled", False):
+                    v1["video_background"] = {
+                        "ENABLE": True,
+                        "SOURCE_PATH": elem.get("source_path", ""),
+                        "x": elem.get("crop_x", 0),
+                        "y": elem.get("crop_y", 0),
+                        "width": elem.get("crop_width", 0),
+                        "height": elem.get("crop_height", 0),
+                        "START_OFFSET": elem.get("start_offset", "00:00"),
+                        "DURATION": elem.get("duration", ""),
+                        "LOOP_FADE_DURATION": elem.get("loop_fade_duration", 1.0),
+                        "LOCAL_PATH": "background.mp4",
+                        "REMOTE_PATH": "/mnt/SDCARD/video/background.mp4",
+                    }
+            elif etype == "background_image":
+                v1["static_images"]["BACKGROUND"] = {
+                    "PATH": "background.png", "X": 0, "Y": 0
+                }
+            elif etype == "image":
+                v1["static_images"][name] = {
                     "PATH": elem.get("path", ""),
-                    "X": elem.get("x", 0),
-                    "Y": elem.get("y", 0),
+                    "X": elem.get("x", 0), "Y": elem.get("y", 0),
+                    "WIDTH": elem.get("width", 100), "HEIGHT": elem.get("height", 100),
                 }
-            elif elem_type == "text":
-                v1["static_text"][elem.get("name", "TEXT")] = {
+            elif etype == "text":
+                v1["static_text"][name] = {
                     "TEXT": elem.get("text", ""),
-                    "X": elem.get("x", 0),
-                    "Y": elem.get("y", 0),
-                    "FONT": elem.get("font", "roboto/Roboto-Regular.ttf"),
+                    "X": elem.get("x", 0), "Y": elem.get("y", 0),
+                    "FONT": elem.get("font", ""),
                     "FONT_SIZE": elem.get("font_size", 16),
-                    "FONT_COLOR": elem.get("color", "255, 255, 255"),
+                    "FONT_COLOR": elem.get("color", "255, 255, 255, 255").rsplit(",", 1)[0], # Remove alpha
+                    "ALIGN": elem.get("align", "left"),
+                    "ANCHOR": elem.get("anchor", "lt"),
                 }
-            else:
-                # Keep other elements in ui_elements
-                v1["ui_elements"].append(elem)
-        
-        # Convert dynamic_elements back to STATS structure
-        # This is complex and would need full implementation
-        # For now, just note that dynamic elements exist
-        if v2.get("dynamic_elements"):
-            logger.warning("Dynamic elements export to v1 not fully implemented")
+
+        # Handle dynamic elements (STATS and dynamic_text)
+        for elem in dynamic_elements:
+            etype = elem.get("type")
+            name = elem.get("name", "Dynamic")
+            
+            if etype == "dynamic_text":
+                # Determine if it belongs to STATS or dynamic_text top-level
+                text = elem.get("text", "")
+                sensor_path = elem.get("sensor", "")
+                
+                # Check if it's a simple sensor path like "CPU.PERCENTAGE"
+                parts = sensor_path.split(".")
+                if len(parts) >= 2 and text == f"{{{sensor_path}:u}}":
+                    # Place into STATS
+                    sensor_type = parts[0]
+                    metric = ".".join(parts[1:])
+                    
+                    if sensor_type not in v1["STATS"]:
+                        v1["STATS"][sensor_type] = {"INTERVAL": elem.get("interval", 1)}
+                    
+                    # Create metric entry if not exists
+                    # We might need to split further if metric itself has dots
+                    curr = v1["STATS"][sensor_type]
+                    for p in parts[1:-1]:
+                        if p not in curr: curr[p] = {}
+                        curr = curr[p]
+                    
+                    last_metric = parts[-1]
+                    if last_metric not in curr:
+                        curr[last_metric] = {}
+                    
+                    # Add TEXT section
+                    text_cfg = {
+                        "SHOW": True,
+                        "X": elem.get("x", 0), "Y": elem.get("y", 0),
+                        "FONT": elem.get("font", ""),
+                        "FONT_SIZE": elem.get("font_size", 16),
+                        "FONT_COLOR": elem.get("color", "255, 255, 255, 255").rsplit(",", 1)[0],
+                        "ALIGN": elem.get("align", "left"),
+                        "ANCHOR": elem.get("anchor", "lt"),
+                        "SHOW_UNIT": elem.get("show_unit", True),
+                    }
+                    if elem.get("force_static"):
+                        text_cfg["WIDTH"] = elem.get("width")
+                        text_cfg["HEIGHT"] = elem.get("height")
+                    
+                    curr[last_metric]["TEXT"] = text_cfg
+                else:
+                    # Place into dynamic_text section
+                    dt_cfg = {
+                        "SHOW": True,
+                        "TEXT": text,
+                        "X": elem.get("x", 0), "Y": elem.get("y", 0),
+                        "FONT": elem.get("font", ""),
+                        "FONT_SIZE": elem.get("font_size", 16),
+                        "FONT_COLOR": elem.get("color", "255, 255, 255, 255").rsplit(",", 1)[0],
+                        "ALIGN": elem.get("align", "left"),
+                        "ANCHOR": elem.get("anchor", "lt"),
+                    }
+                    if elem.get("force_static"):
+                        dt_cfg["WIDTH"] = elem.get("width")
+                        dt_cfg["HEIGHT"] = elem.get("height")
+                    
+                    v1["dynamic_text"][name] = dt_cfg
+                    if "INTERVAL" not in v1["dynamic_text"]:
+                         v1["dynamic_text"]["INTERVAL"] = elem.get("interval", 1)
+
+        # Cleanup empty sections
+        if not v1["static_images"]: del v1["static_images"]
+        if not v1["static_text"]: del v1["static_text"]
+        if not v1["STATS"]: del v1["STATS"]
+        if not v1["dynamic_text"]: del v1["dynamic_text"]
         
         return v1
     

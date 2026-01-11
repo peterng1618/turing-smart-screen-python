@@ -16,13 +16,32 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QPushButton,
     QMenu, QStyledItemDelegate, QStyleOptionViewItem, QStyle
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QModelIndex, QPoint, QItemSelection
+from PyQt6.QtCore import Qt, pyqtSignal, QModelIndex, QPoint, QItemSelection, QAbstractProxyModel, QSortFilterProxyModel
 from PyQt6.QtGui import QUndoStack, QAction, QIcon, QPainter, QMouseEvent
 
 from theme_editor.models.theme_model import ThemeModel
-from theme_editor.models.element import ElementType, create_element
+from theme_editor.models.element import (
+    ElementType, create_element,
+    BackgroundImageElement, BackgroundVideoElement
+)
 
 logger = logging.getLogger(__name__)
+
+
+class ReverseLayerProxyModel(QSortFilterProxyModel):
+    """
+    Proxy model that reverses the order of items (bottom-to-top).
+    Uses sorting to achieve this without complex index mapping.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDynamicSortFilter(True)
+        
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
+        # Sort by row index: lower row index (top in source) < higher row index
+        # But we will use DescendingOrder in the view to flip it.
+        # So standard comparison here is fine.
+        return left.row() < right.row()
 
 
 class LayerItemDelegate(QStyledItemDelegate):
@@ -101,7 +120,16 @@ class LayerPanel(QWidget):
         
         # Tree view for layers
         self._tree_view = QTreeView()
-        self._tree_view.setModel(self._model)
+        
+        # Use reversed proxy model
+        self._proxy_model = ReverseLayerProxyModel()
+        self._proxy_model.setSourceModel(self._model)
+        self._tree_view.setModel(self._proxy_model)
+        # Sort descending to show last items (backgrounds) at bottom if they have high index? 
+        # Wait, index 0 is at top. We want index 0 (Background) at BOTTOM.
+        # So we want Descending order: N...0.
+        self._proxy_model.sort(0, Qt.SortOrder.DescendingOrder)
+        
         self._tree_view.setHeaderHidden(True)
         self._tree_view.setDragEnabled(True)
         self._tree_view.setAcceptDrops(True)
@@ -189,9 +217,11 @@ class LayerPanel(QWidget):
             for elem_id in element_ids:
                 element = self._model.get_element(elem_id)
                 if element:
-                    index = self._model._get_index_for_element(elem_id)
-                    if index.isValid():
-                        new_selection.select(index, index)
+                    source_index = self._model._get_index_for_element(elem_id)
+                    if source_index.isValid():
+                        proxy_index = self._proxy_model.mapFromSource(source_index)
+                        if proxy_index.isValid():
+                            new_selection.select(proxy_index, proxy_index)
             
             # Apply atomic update
             selection_model.select(
@@ -250,9 +280,12 @@ class LayerPanel(QWidget):
             action_duplicate = menu.addAction("Duplicate (Ctrl+D)")
             action_duplicate.triggered.connect(self._on_duplicate_clicked)
             
-            # Delete
+            # Delete (disabled for background elements)
             action_delete = menu.addAction("Delete (Del)")
             action_delete.triggered.connect(self._on_delete_clicked)
+            if isinstance(element, (BackgroundImageElement, BackgroundVideoElement)):
+                action_delete.setEnabled(False)
+                action_delete.setText("Delete (Protected)")
             
             menu.addSeparator()
             
@@ -337,11 +370,16 @@ class LayerPanel(QWidget):
         logger.info(f"Added {element_type.name}: {element.name}")
     
     def _on_delete_clicked(self) -> None:
-        """Delete selected elements."""
+        """Delete selected elements (skips protected background elements)."""
         indexes = self._tree_view.selectedIndexes()
         for idx in reversed(indexes):
             element_id = idx.data(ThemeModel.ElementIdRole)
             if element_id:
+                element = self._model.get_element(element_id)
+                # Skip protected background elements
+                if isinstance(element, (BackgroundImageElement, BackgroundVideoElement)):
+                    logger.debug(f"Skipping delete for protected element: {element.name}")
+                    continue
                 self._model.remove_element(element_id)
     
     def _on_duplicate_clicked(self) -> None:

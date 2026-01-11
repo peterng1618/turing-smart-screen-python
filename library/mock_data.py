@@ -8,76 +8,102 @@ class MockDataProvider:
     @staticmethod
     def populate():
         """Populate config.STATS_VALUES and config.STATS_RAW with mock data."""
+        # Use a base set of values that cover most sensor paths
         mock_values = {
             "CPU_PERCENTAGE": "42%",
-            "CPU_PERCENTAGE_RAW": "42",
             "CPU_TEMPERATURE": "55°C",
-            "CPU_TEMPERATURE_RAW": "55",
             "CPU_FREQUENCY": "4.20 GHz",
-            "CPU_FREQUENCY_RAW": "4200",
+            "CPU_LOAD_LOAD1": "1.2",
+            "CPU_LOAD_LOAD5": "1.0",
+            "CPU_LOAD_LOAD15": "0.8",
             
             "GPU_PERCENTAGE": "68%",
-            "GPU_PERCENTAGE_RAW": "68",
             "GPU_TEMPERATURE": "62°C",
-            "GPU_TEMPERATURE_RAW": "62",
             "GPU_MEMORY_USED": "4096 M",
-            "GPU_MEMORY_USED_RAW": "4096",
             "GPU_MEMORY_TOTAL": "8192 M",
-            "GPU_MEMORY_TOTAL_RAW": "8192",
-            "GPU_FPS": "144 FPS",
-            "GPU_FPS_RAW": "144",
+            "GPU_MEMORY_FREE": "4096 M",
+            "GPU_MEMORY_PERCENTAGE": "50%",
+            "GPU_FPS": "144",
             
-            # Memory - with aliases for MEMORY_ prefix
-            "MEM_VIRTUAL_PERCENT": "45%",
-            "MEM_VIRTUAL_PERCENT_RAW": "45",
-            "MEM_VIRTUAL_USED": "16384 M",
-            "MEM_VIRTUAL_USED_RAW": "16384",
-            "MEM_VIRTUAL_TOTAL": "32768 M",
-            "MEM_VIRTUAL_TOTAL_RAW": "32768",
-            "MEMORY_PERCENTAGE": "45%",  # Alias
-            "MEMORY_PERCENTAGE_RAW": "45",
+            "MEMORY_PERCENTAGE": "45%",
+            "MEMORY_USED": "16384 M",
+            "MEMORY_TOTAL": "32768 M",
+            "MEMORY_FREE": "16384 M",
+            "MEMORY_VIRTUAL_PERCENTAGE": "48%",
+            "MEMORY_VIRTUAL_USED": "18000 M",
+            "MEMORY_VIRTUAL_TOTAL": "32000 M",
+            "MEMORY_SWAP_PERCENTAGE": "10%",
             
-            # Disk - with aliases
-            "DISK_USED_PERCENT": "33%",
-            "DISK_USED_PERCENT_RAW": "33",
+            "DISK_PERCENTAGE": "33%",
             "DISK_USED": "333 G",
-            "DISK_USED_RAW": "333",
             "DISK_TOTAL": "1000 G",
-            "DISK_TOTAL_RAW": "1000",
-            "DISK_PERCENTAGE": "33%",  # Alias
-            "DISK_PERCENTAGE_RAW": "33",
+            "DISK_FREE": "667 G",
             
-            # Network - with aliases
             "NET_DOWNLOAD_RATE": "1.2 MB/s",
-            "NET_DOWNLOAD_RATE_RAW": "1200000",
             "NET_UPLOAD_RATE": "0.5 MB/s",
-            "NET_UPLOAD_RATE_RAW": "500000",
-            "NET_PERCENTAGE": "25%",  # Alias (network utilization)
-            "NET_PERCENTAGE_RAW": "25",
+            "NET_DOWNLOADED": "100 GB",
+            "NET_UPLOADED": "20 GB",
             
             "DATE_DAY": "Monday, Jan 12",
             "DATE_HOUR": "17:45:00",
-            "DATE_PERCENTAGE": "50%",  # Placeholder
             
-            "UPTIME_FORMATTED": "2:15:33",
-            "UPTIME_SECONDS": "8133",
-            "UPTIME_SECONDS_RAW": "8133",
-            "UPTIME_PERCENTAGE": "100%",  # Placeholder
+            "UPTIME_FORMATTED": "2 days, 15:33:10",
+            "UPTIME_SECONDS": "228790",
             
-            "WEATHER_TEMP": "22°C",
-            "WEATHER_DESC": "Partly Cloudy",
-            "WEATHER_PERCENTAGE": "60%",  # Placeholder (humidity)
+            "WEATHER_TEMPERATURE": "22°C",
+            "WEATHER_TEMPERATURE_FELT": "24°C",
+            "WEATHER_HUMIDITY": "60%",
+            "WEATHER_DESCRIPTION": "Partly Cloudy",
+            "WEATHER_UPDATE_TIME": "17:40",
             
-            "PING_PERCENTAGE": "10%",  # Placeholder
+            "PING_LATENCY": "15 ms",
+            "PING_PERCENTAGE": "0%",
         }
-        
-        config.STATS_VALUES.update(mock_values)
-        
-        # Populate RAW values as matching types (int/float)
+
+        # Handle RAW values automatically
+        stats_raw = {}
         for k, v in mock_values.items():
-            if k.endswith("_RAW"):
-                sensor_base = k[:-4]
+            # Use the string value for STATS_VALUES
+            config.STATS_VALUES[k] = v
+            
+            # Try to extract a numeric value for STATS_RAW
+            raw_val = v
+            if isinstance(v, str):
+                # Remove common units
+                for unit in ["%", "°C", " GHz", " M", " G", " MB/s", " ms", " FPS", " GB"]:
+                    raw_val = raw_val.replace(unit, "")
                 try:
-                    config.STATS_RAW[sensor_base] = float(v.strip())
+                    raw_val = float(raw_val.strip())
                 except ValueError:
-                    config.STATS_RAW[sensor_base] = v
+                    pass
+            stats_raw[k] = raw_val
+            config.STATS_RAW[k] = raw_val
+
+        # Add dot-notation versions for everything
+        all_keys = list(config.STATS_VALUES.keys())
+        for k in all_keys:
+            if "_" in k:
+                dot_key = k.replace("_", ".")
+                config.STATS_VALUES[dot_key] = config.STATS_VALUES[k]
+                if k in stats_raw:
+                    config.STATS_RAW[dot_key] = stats_raw[k]
+        
+        # Add some specific multi-level dots that might be used
+        # e.g. MEMORY_VIRTUAL_PERCENTAGE -> MEMORY.VIRTUAL.PERCENTAGE
+        for k in all_keys:
+             if "_VIRTUAL_" in k:
+                 dot_key = k.replace("_VIRTUAL_", ".VIRTUAL.")
+                 config.STATS_VALUES[dot_key] = config.STATS_VALUES[k]
+                 config.STATS_RAW[dot_key] = stats_raw[k]
+             if "_SWAP_" in k:
+                 dot_key = k.replace("_SWAP_", ".SWAP.")
+                 config.STATS_VALUES[dot_key] = config.STATS_VALUES[k]
+                 config.STATS_RAW[dot_key] = stats_raw[k]
+
+        # Ensure UPTIME.SECONDS_RAW etc match the expected format
+        for k, v in stats_raw.items():
+            config.STATS_VALUES[f"{k}_RAW"] = str(v)
+            if "_" in k:
+                dot_key = k.replace("_", ".")
+                config.STATS_VALUES[f"{dot_key}_RAW"] = str(v)
+

@@ -1,0 +1,27 @@
+1/12/2026 4:00:34 AM [WARNING] Stub sensors, not real HW sensors
+1/12/2026 4:00:34 AM [WARNING] Could not load font /tmp/fonts/roboto/Roboto-Regular.ttf, fallback to default
+.E1/12/2026 4:00:34 AM [WARNING] Could not load font /tmp/fonts/roboto/Roboto-Regular.ttf, fallback to default
+1/12/2026 4:00:45 AM [WARNING] Could not load font /tmp/fonts/roboto/Roboto-Regular.ttf, fallback to default
+.1/12/2026 4:00:34 AM [WARNING] Could not load font /tmp/fonts/roboto/Roboto-Regular.ttf, fallback to default
+.1/12/2026 4:00:34 AM [WARNING] Could not load font /tmp/fonts/roboto/Roboto-Regular.ttf, fallback to default
+.
+======================================================================
+ERROR: test_dynamic_text_formatting_flags (__main__.TestDynamicText.test_dynamic_text_formatting_flags)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\git-repos\turing-smart-screen-python\tests\library\test_dynamic_text.py", line 145, in test_dynamic_text_formatting_flags
+    stats.DynamicText.stats()
+  File "D:\git-repos\turing-smart-screen-python\library\stats.py", line 1034, in stats
+    value = babel.dates.format_datetime(dt, format=flag, locale=locale.getlocale()[0])
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\peter\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\LocalCache\local-packages\Python312\site-packages\babel\dates.py", line 743, in format_datetime
+    locale = Locale.parse(locale or LC_TIME)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\peter\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\LocalCache\local-packages\Python312\site-packages\babel\core.py", line 427, in parse
+    raise UnknownLocaleError(input_id)
+babel.core.UnknownLocaleError: unknown locale 'english_UNITED STATES'
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.029s
+
+FAILED (errors=1)

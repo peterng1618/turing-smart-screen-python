@@ -119,5 +119,43 @@ class TestDynamicText(unittest.TestCase):
             stats.DynamicText.stats()
             self.assertEqual(mock_lcd.DisplayPILImage.call_count, 2)
 
+    def test_dynamic_text_dot_notation(self):
+        mock_lcd = MagicMock()
+        mock_display_mod.display.lcd = mock_lcd
+        stats.DynamicText.last_updates = {}
+        
+        mock_config_mod.STATS_VALUES["CPU.PERCENTAGE"] = "25%"
+        mock_config_mod.THEME_DATA["dynamic_text"]["TEST_VAL"]["TEXT"] = "CPU: {CPU.PERCENTAGE:u}"
+        
+        stats.DynamicText.stats()
+        mock_lcd.DisplayPILImage.assert_called_once()
+        
+    def test_dynamic_text_formatting_flags(self):
+        mock_lcd = MagicMock()
+        mock_display_mod.display.lcd = mock_lcd
+        stats.DynamicText.last_updates = {}
+        
+        # Mock RAW value for date (epoch)
+        now = time.time()
+        mock_config_mod.STATS_RAW["DATE.HOUR"] = now
+        mock_config_mod.STATS_RAW["UPTIME"] = 3661 # 1h 1m 1s
+        
+        # Test Date flag
+        mock_config_mod.THEME_DATA["dynamic_text"]["TEST_VAL"]["TEXT"] = "{DATE.HOUR:short}"
+        stats.DynamicText.stats()
+        self.assertEqual(mock_lcd.DisplayPILImage.call_count, 1)
+        
+        # Test Uptime flag
+        stats.DynamicText.last_updates = {} # Reset to allow immediate re-render
+        mock_config_mod.THEME_DATA["dynamic_text"]["TEST_VAL"]["TEXT"] = "{UPTIME:FORMATTED}"
+        stats.DynamicText.stats()
+        self.assertEqual(mock_lcd.DisplayPILImage.call_count, 2)
+        
+        # Test Uptime seconds
+        stats.DynamicText.last_updates = {} # Reset to allow immediate re-render
+        mock_config_mod.THEME_DATA["dynamic_text"]["TEST_VAL"]["TEXT"] = "{UPTIME:SECONDS}"
+        stats.DynamicText.stats()
+        self.assertEqual(mock_lcd.DisplayPILImage.call_count, 3)
+
 if __name__ == '__main__':
     unittest.main()

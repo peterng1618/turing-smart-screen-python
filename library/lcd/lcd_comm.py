@@ -249,12 +249,23 @@ class LcdComm(ABC):
             background_image: Optional[str] = None,
             align: str = 'left',
             anchor: str = 'la',
+            opacity: float = 1.0,
     ):
         # Convert text to bitmap using PIL and display it
         # Provide the background image path to display text with transparent background
+        # opacity: Global opacity for the text (0.0-1.0), applied in addition to font_color alpha
 
         font_color = parse_color(font_color)
         background_color = parse_color(background_color)
+        
+        # Ensure font_color has alpha component (backward compatibility for RGB)
+        if len(font_color) == 3:
+            font_color = font_color + (255,)
+        
+        # Apply global opacity to font_color alpha
+        if opacity < 1.0:
+            # Multiply existing alpha by opacity
+            font_color = font_color[:3] + (int(font_color[3] * opacity),)
 
         assert x <= self.get_width(), 'Text X coordinate ' + str(x) + ' must be <= display width ' + str(
             self.get_width())
@@ -269,14 +280,20 @@ class LcdComm(ABC):
 
         if background_image is None:
             # A text bitmap is created with max width/height by default : text with solid background
+            # Use RGBA mode to support transparency in font_color
+            # background_color needs alpha for RGBA mode
+            bg_color_rgba = background_color if len(background_color) == 4 else background_color + (255,)
             text_image = Image.new(
-                'RGB',
+                'RGBA',
                 (self.get_width(), self.get_height()),
-                background_color
+                bg_color_rgba
             )
         else:
             # The text bitmap is created from provided background image : text with transparent background
             text_image = self.open_image(background_image)
+            # Convert to RGBA if needed to support alpha compositing
+            if text_image.mode != 'RGBA':
+                text_image = text_image.convert('RGBA')
 
         # Get text bounding box
         ttfont = self.open_font(font, font_size)
@@ -317,6 +334,13 @@ class LcdComm(ABC):
 
         # Crop text bitmap to keep only the text
         text_image = text_image.crop(box=(left, top, right, bottom))
+        
+        # Convert back to RGB for display compatibility (alpha already applied during compositing)
+        if text_image.mode == 'RGBA':
+            # For solid backgrounds, flatten to RGB
+            # For transparent backgrounds (background_image), keep RGBA for proper blending
+            if background_image is None:
+                text_image = text_image.convert('RGB')
 
         self.DisplayPILImage(text_image, left, top)
 

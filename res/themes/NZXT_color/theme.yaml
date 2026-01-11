@@ -152,5 +152,5 @@ STATS:
         FONT_SIZE: 25
         FONT_COLOR: 255, 255, 255
         BACKGROUND_IMAGE: background.png
-        WIDTH: 160
+b        WIDTH: 160
         ANCHOR: lt

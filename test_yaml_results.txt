@@ -1,0 +1,230 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.0.2, pluggy-1.6.0
+PyQt6 6.10.2 -- Qt runtime 6.10.1 -- Qt compiled 6.10.0
+rootdir: D:\git-repos\turing-smart-screen-python
+plugins: qt-4.5.0
+collected 17 items
+
+tests\theme_editor\test_yaml_io.py ...FFFFF..FFFF...                     [100%]
+
+================================== FAILURES ===================================
+_____________ TestV1ToV2Conversion.test_convert_background_image ______________
+
+self = <tests.theme_editor.test_yaml_io.TestV1ToV2Conversion object at 0x000001A28E163C80>
+
+    def test_convert_background_image(self):
+        """Test converting static background image."""
+        io = ThemeYamlIO()
+        v1 = {
+            "static_images": {
+                "BACKGROUND": {
+                    "PATH": "bg.png",
+                    "X": 0,
+                    "Y": 0,
+                }
+            }
+        }
+    
+        v2 = io._convert_v1_to_v2(v1)
+    
+>       assert v2["background"]["type"] == "image"
+               ^^^^^^^^^^^^^^^^
+E       KeyError: 'background'
+
+tests\theme_editor\test_yaml_io.py:65: KeyError
+_____________ TestV1ToV2Conversion.test_convert_video_background ______________
+
+self = <tests.theme_editor.test_yaml_io.TestV1ToV2Conversion object at 0x000001A28E163EF0>
+
+    def test_convert_video_background(self):
+        """Test converting video background."""
+        io = ThemeYamlIO()
+        v1 = {
+            "video_background": {
+                "ENABLE": True,
+                "LOCAL_PATH": "video.mp4",
+                "REMOTE_PATH": "/mnt/SDCARD/video/video.mp4",
+            }
+        }
+    
+        v2 = io._convert_v1_to_v2(v1)
+    
+>       assert v2["background"]["type"] == "video"
+               ^^^^^^^^^^^^^^^^
+E       KeyError: 'background'
+
+tests\theme_editor\test_yaml_io.py:81: KeyError
+_______________ TestV1ToV2Conversion.test_convert_static_images _______________
+
+self = <tests.theme_editor.test_yaml_io.TestV1ToV2Conversion object at 0x000001A28E18C1A0>
+
+    def test_convert_static_images(self):
+        """Test converting static images to ui_elements."""
+        io = ThemeYamlIO()
+        v1 = {
+            "static_images": {
+                "BACKGROUND": {"PATH": "bg.png", "X": 0, "Y": 0},
+                "LOGO": {"PATH": "logo.png", "X": 10, "Y": 20, "WIDTH": 50, "HEIGHT": 50},
+            }
+        }
+    
+        v2 = io._convert_v1_to_v2(v1)
+    
+        # BACKGROUND should not be in ui_elements (it's the background)
+>       assert len(v2["ui_elements"]) == 1
+E       AssertionError: assert 3 == 1
+E        +  where 3 = len([{'angle': 0, 'duration': '', 'enabled': False, 'height': 0, ...}, {'locked': True, 'name': 'Background Image', 'path': 'bg.png', 'type': 'background_image', ...}, {'height': 50, 'name': 'LOGO', 'path': 'logo.png', 'type': 'image', ...}])
+
+tests\theme_editor\test_yaml_io.py:97: AssertionError
+________________ TestV1ToV2Conversion.test_convert_static_text ________________
+
+self = <tests.theme_editor.test_yaml_io.TestV1ToV2Conversion object at 0x000001A28E18C410>
+
+    def test_convert_static_text(self):
+        """Test converting static text to ui_elements."""
+        io = ThemeYamlIO()
+        v1 = {
+            "static_text": {
+                "TITLE": {
+                    "TEXT": "Hello World",
+                    "X": 100,
+                    "Y": 50,
+                    "FONT": "roboto/Roboto-Bold.ttf",
+                    "FONT_SIZE": 24,
+                    "FONT_COLOR": "255, 255, 255",
+                }
+            }
+        }
+    
+        v2 = io._convert_v1_to_v2(v1)
+    
+>       assert len(v2["ui_elements"]) == 1
+E       AssertionError: assert 3 == 1
+E        +  where 3 = len([{'angle': 0, 'duration': '', 'enabled': False, 'height': 0, ...}, {'locked': True, 'name': 'Background Image', 'path'..._image', ...}, {'align': 'left', 'anchor': 'lt', 'color': '255, 255, 255, 255', 'font': 'roboto/Roboto-Bold.ttf', ...}])
+
+tests\theme_editor\test_yaml_io.py:124: AssertionError
+__________ TestV1ToV2Conversion.test_convert_ui_elements_passthrough __________
+
+self = <tests.theme_editor.test_yaml_io.TestV1ToV2Conversion object at 0x000001A28E18C680>
+
+    def test_convert_ui_elements_passthrough(self):
+        """Test that ui_elements are passed through unchanged."""
+        io = ThemeYamlIO()
+        v1 = {
+            "ui_elements": [
+                {"type": "rectangle", "x": 10, "y": 20, "width": 100, "height": 50},
+                {"type": "circle", "x": 100, "y": 100, "radius": 30},
+            ]
+        }
+    
+        v2 = io._convert_v1_to_v2(v1)
+    
+>       assert len(v2["ui_elements"]) == 2
+E       AssertionError: assert 4 == 2
+E        +  where 4 = len([{'angle': 0, 'duration': '', 'enabled': False, 'height': 0, ...}, {'locked': True, 'name': 'Background Image', 'path'... {'height': 50, 'type': 'rectangle', 'width': 100, 'x': 10, ...}, {'radius': 30, 'type': 'circle', 'x': 100, 'y': 100}])
+
+tests\theme_editor\test_yaml_io.py:144: AssertionError
+________ TestV2ToV1Conversion.test_convert_background_to_static_images ________
+
+self = <tests.theme_editor.test_yaml_io.TestV2ToV1Conversion object at 0x000001A28E18CE00>
+
+    def test_convert_background_to_static_images(self):
+        """Test converting image background always uses background.png."""
+        io = ThemeYamlIO()
+        v2 = {
+            "background": {
+                "type": "image",
+                "path": "custom_bg.png",  # Original path doesn't matter
+            }
+        }
+    
+        v1 = io._convert_v2_to_v1(v2)
+    
+        # Background path is always "background.png" (the baked file)
+>       assert "BACKGROUND" in v1["static_images"]
+                               ^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'static_images'
+
+tests\theme_editor\test_yaml_io.py:211: KeyError
+_________ TestV2ToV1Conversion.test_ui_elements_excluded_from_export __________
+
+self = <tests.theme_editor.test_yaml_io.TestV2ToV1Conversion object at 0x000001A28E18D070>
+
+    def test_ui_elements_excluded_from_export(self):
+        """Test that ui_elements are NOT exported (they are baked to background)."""
+        io = ThemeYamlIO()
+        v2 = {
+            "ui_elements": [
+                {"type": "image", "name": "LOGO", "path": "logo.png", "x": 10, "y": 20},
+                {"type": "text", "name": "TITLE", "text": "Test", "x": 50, "y": 100}
+            ]
+        }
+    
+        v1 = io._convert_v2_to_v1(v2)
+    
+        # ui_elements should NOT be exported - they are baked to background
+>       assert "LOGO" not in v1.get("static_images", {})
+E       AssertionError: assert 'LOGO' not in {'LOGO': {'HEIGHT': 100, 'PATH': 'logo.png', 'WIDTH': 100, 'X': 10, ...}}
+E        +  where {'LOGO': {'HEIGHT': 100, 'PATH': 'logo.png', 'WIDTH': 100, 'X': 10, ...}} = <built-in method get of dict object at 0x000001A28E4158C0>('static_images', {})
+E        +    where <built-in method get of dict object at 0x000001A28E4158C0> = {'display': {}, 'static_images': {'LOGO': {'HEIGHT': 100, 'PATH': 'logo.png', 'WIDTH': 100, 'X': 10, ...}}, 'static_text': {'TITLE': {'ALIGN': 'left', 'ANCHOR': 'lt', 'FONT': '', 'FONT_COLOR': '255, 255, 255', ...}}}.get
+
+tests\theme_editor\test_yaml_io.py:227: AssertionError
+_______________ TestV2ToV1Conversion.test_dynamic_text_exported _______________
+
+self = <tests.theme_editor.test_yaml_io.TestV2ToV1Conversion object at 0x000001A28E18D310>
+
+    def test_dynamic_text_exported(self):
+        """Test that dynamic_text IS exported to theme.yaml."""
+        io = ThemeYamlIO()
+        v2 = {
+            "dynamic_text": {
+                "INTERVAL": 1,
+                "SYSTEM_INFO": {
+                    "SHOW": True,
+                    "TEXT": "CPU: {CPU_PERCENTAGE:u}"
+                }
+            }
+        }
+    
+        v1 = io._convert_v2_to_v1(v2)
+    
+        # dynamic_text should be exported (display-time feature)
+>       assert "dynamic_text" in v1
+E       AssertionError: assert 'dynamic_text' in {'display': {}}
+
+tests\theme_editor\test_yaml_io.py:247: AssertionError
+_______________ TestV2ToV1Conversion.test_static_text_exported ________________
+
+self = <tests.theme_editor.test_yaml_io.TestV2ToV1Conversion object at 0x000001A28E163E90>
+
+    def test_static_text_exported(self):
+        """Test that static_text IS exported to theme.yaml."""
+        io = ThemeYamlIO()
+        v2 = {
+            "static_text": {
+                "LABEL": {
+                    "TEXT": "Hello",
+                    "X": 10,
+                    "Y": 20
+                }
+            }
+        }
+    
+        v1 = io._convert_v2_to_v1(v2)
+    
+        # static_text should be exported (display-time feature)
+>       assert "static_text" in v1
+E       AssertionError: assert 'static_text' in {'display': {}}
+
+tests\theme_editor\test_yaml_io.py:266: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/theme_editor/test_yaml_io.py::TestV1ToV2Conversion::test_convert_background_image
+FAILED tests/theme_editor/test_yaml_io.py::TestV1ToV2Conversion::test_convert_video_background
+FAILED tests/theme_editor/test_yaml_io.py::TestV1ToV2Conversion::test_convert_static_images
+FAILED tests/theme_editor/test_yaml_io.py::TestV1ToV2Conversion::test_convert_static_text
+FAILED tests/theme_editor/test_yaml_io.py::TestV1ToV2Conversion::test_convert_ui_elements_passthrough
+FAILED tests/theme_editor/test_yaml_io.py::TestV2ToV1Conversion::test_convert_background_to_static_images
+FAILED tests/theme_editor/test_yaml_io.py::TestV2ToV1Conversion::test_ui_elements_excluded_from_export
+FAILED tests/theme_editor/test_yaml_io.py::TestV2ToV1Conversion::test_dynamic_text_exported
+FAILED tests/theme_editor/test_yaml_io.py::TestV2ToV1Conversion::test_static_text_exported
+========================= 9 failed, 8 passed in 0.27s =========================

@@ -138,6 +138,11 @@ class MainWindow(QMainWindow):
         self.action_save.setStatusTip("Save the current theme")
         self.action_save.triggered.connect(self._save_theme)
         
+        self.action_bake_and_save = QAction("🔥 Bake && Save", self)
+        self.action_bake_and_save.setShortcut(QKeySequence("Ctrl+Shift+B"))
+        self.action_bake_and_save.setStatusTip("Bake UI elements to background and save theme")
+        self.action_bake_and_save.triggered.connect(self._bake_and_save)
+        
         self.action_save_as = QAction("Save &As...", self)
         self.action_save_as.setShortcut(QKeySequence("Ctrl+Shift+S"))
         self.action_save_as.setStatusTip("Save theme with a new name")
@@ -296,6 +301,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.action_new)
         toolbar.addAction(self.action_open)
         toolbar.addAction(self.action_save)
+        toolbar.addAction(self.action_bake_and_save)
         toolbar.addSeparator()
         toolbar.addAction(self.action_undo)
         toolbar.addAction(self.action_redo)
@@ -500,7 +506,7 @@ class MainWindow(QMainWindow):
         if not self._maybe_save():
             return
         
-        themes_dir = Path(__file__).parent / "res" / "themes"
+        themes_dir = Path(__file__).parent.parent / "res" / "themes"
         folder = QFileDialog.getExistingDirectory(
             self,
             "Open Theme",
@@ -526,7 +532,9 @@ class MainWindow(QMainWindow):
             else:
                 yaml_io = ThemeYamlIO()
                 theme_data = yaml_io.load(name)
-                self._theme_model.load_from_data(theme_data)
+                # Calculate absolute path for path resolution
+                theme_path = yaml_io.get_theme_path(name)
+                self._theme_model.load_from_data(theme_data, theme_path=theme_path)
                 self._status_bar.showMessage(f"Loaded theme: {name}")
             
             self._theme_name = name
@@ -578,7 +586,7 @@ class MainWindow(QMainWindow):
         Returns:
             True if saved successfully
         """
-        themes_dir = Path(__file__).parent / "res" / "themes"
+        themes_dir = Path(__file__).parent.parent / "res" / "themes"
         folder = QFileDialog.getExistingDirectory(
             self,
             "Save Theme As",
@@ -589,6 +597,146 @@ class MainWindow(QMainWindow):
             self._theme_name = Path(folder).name
             return self._save_theme()
         return False
+    
+    def _bake_and_save(self) -> bool:
+        """
+        Bake UI elements to background and save theme.
+        
+        This method:
+        1. Renders all ui_elements to an overlay image
+        2. If video: processes video with overlay, extracts frame 10 as background.png
+        3. If image: composites overlay onto background.png
+        4. Saves theme-editor.yaml (full design data)
+        5. Exports theme.yaml (display-time data only, no ui_elements)
+        
+        Returns:
+            True if baked and saved successfully
+        """
+        if not self._theme_name:
+            # Need a name first
+            return self._save_theme_as()
+        
+        try:
+            from PIL import Image
+            
+            theme_path = ThemeYamlIO().get_theme_path(self._theme_name)
+            theme_data = self._theme_model.to_data()
+            
+            # Step 1: Render UI elements to overlay
+            # Exclude background video as it will be processed by video_processor
+            self._status_bar.showMessage("Baking UI elements...")
+            overlay = self._render_ui_overlay(theme_data, exclude_types=["background_video"])
+            
+            # Step 2: Handle video or image background
+            video_bg = theme_data.get("video_background", {})
+            if video_bg.get("ENABLE", False) and video_bg.get("SOURCE_PATH"):
+                # Video background: process with overlay
+                self._status_bar.showMessage("Baking video background...")
+                self._bake_video_background(theme_path, theme_data, overlay)
+            else:
+                # Static image background: composite overlay
+                self._status_bar.showMessage("Baking image background...")
+                self._bake_image_background(theme_path, theme_data, overlay)
+            
+            # Step 3: Save both formats
+            yaml_io = ThemeYamlIO()
+            yaml_io.save_all(self._theme_name, theme_data)
+            
+            self._undo_stack.setClean()
+            self._status_bar.showMessage(f"Baked and saved: {self._theme_name}")
+            logger.info(f"Baked and saved theme: {self._theme_name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to bake and save: {e}")
+            QMessageBox.critical(
+                self,
+                "Bake Error",
+                f"Failed to bake and save theme:\n{e}"
+            )
+            return False
+    
+    def _render_ui_overlay(self, theme_data: dict, exclude_types: list = None) -> 'Image.Image':
+        """
+        Render ui_elements to a transparent overlay image.
+        
+        Args:
+            theme_data: Theme data dictionary
+            exclude_types: List of element types to exclude
+            
+        Returns:
+            PIL Image (RGBA)
+        """
+        from library.ui_renderer import UiRenderer
+        theme_path = ThemeYamlIO().get_theme_path(self._theme_name)
+        renderer = UiRenderer(theme_data, theme_path)
+        return renderer.generate_overlay(exclude_types=exclude_types)
+    
+    def _get_display_dimensions(self, display: dict) -> tuple:
+        """Get display dimensions from settings."""
+        size = display.get("DISPLAY_SIZE", "3.5\"")
+        orientation = display.get("DISPLAY_ORIENTATION", "portrait")
+        
+        # Standard dimensions
+        sizes = {
+            "2.1\"": (480, 480),
+            "3.5\"": (320, 480),
+            "5\"": (480, 800),
+            "8.8\"": (480, 1920),
+        }
+        w, h = sizes.get(size, (320, 480))
+        
+        if orientation == "landscape":
+            w, h = h, w
+        
+        return (w, h)
+    
+    def _bake_video_background(self, theme_path: Path, theme_data: dict, overlay: 'Image.Image') -> None:
+        """
+        Process video with UI overlay baked in.
+        """
+        from theme_editor.utils.video_processor import process_video
+        
+        video_bg = theme_data.get("video_background", {})
+        source_path = video_bg.get("SOURCE_PATH", "")
+        if not source_path:
+            return
+            
+        # Ensure source path is absolute for processor
+        if not os.path.isabs(source_path):
+            source_path = str(theme_path / source_path)
+            
+        # Determine output path
+        source_name = Path(source_path).stem
+        output_video = f"{source_name}_background.mp4"
+        output_path = str(theme_path / output_video)
+        
+        # Run processing
+        logger.info(f"Starting video processing: {source_path} -> {output_path}")
+        success = process_video(str(theme_path), source_path, output_path)
+        
+        if success:
+            logger.info("Video baking successful")
+            # Update local path in theme data if needed (though yaml_io handles it during save)
+        else:
+            logger.error("Video baking failed")
+            raise RuntimeError("Video processing failed. Check logs for details.")
+    
+    def _bake_image_background(self, theme_path: Path, theme_data: dict, overlay: 'Image.Image') -> None:
+        """
+        Composite UI overlay onto static background image.
+        """
+        from PIL import Image
+        bg_path = theme_path / "background.png"
+        
+        # If the overlay already contains the background image (rendered by UiRenderer),
+        # we can just use it. But we might want a solid base if overlay has transparency.
+        background = Image.new("RGBA", overlay.size, (0, 0, 0, 255))
+        result = Image.alpha_composite(background, overlay)
+        
+        # Save as PNG
+        result.convert("RGB").save(bg_path, "PNG")
+        logger.info(f"Baked image background to {bg_path}")
     
     # --- Element Creation ---
     

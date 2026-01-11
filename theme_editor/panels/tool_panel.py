@@ -45,9 +45,8 @@ class ToolPanel(QWidget):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(15)
         
-        # 1. Live Text Group
-        container_layout.addWidget(self._create_group("Live Text", [
-            ("📝 Static", lambda: self.add_element_requested.emit(ElementType.TEXT)),
+        # 1. Dynamic Elements Group
+        container_layout.addWidget(self._create_group("Dynamic Elements", [
             ("🔄 Dynamic", lambda: self.add_element_requested.emit(ElementType.DYNAMIC_TEXT)),
         ]))
         
@@ -61,7 +60,7 @@ class ToolPanel(QWidget):
             ("⚙️ Icon", lambda: self.add_element_requested.emit(ElementType.ICON)),
             ("🟦 Rectangle", lambda: self.add_element_requested.emit(ElementType.RECTANGLE)),
             ("📐 Triangle", lambda: self.add_element_requested.emit(ElementType.TRIANGLE)),
-            ("🟡 Circle/Ellipse", lambda: self.add_element_requested.emit(ElementType.CIRCLE)),
+            ("🟡 Circle", lambda: self.add_element_requested.emit(ElementType.CIRCLE)),
             ("➖ Line", lambda: self.add_element_requested.emit(ElementType.LINE)),
         ]))
         

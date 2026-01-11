@@ -18,7 +18,7 @@ class TestElementType:
     def test_all_types_defined(self):
         """Verify all expected element types exist."""
         expected = [
-            'GROUP', 'BACKGROUND', 'RECTANGLE', 'CIRCLE', 'ELLIPSE',
+            'GROUP', 'BACKGROUND_IMAGE', 'BACKGROUND_VIDEO', 'RECTANGLE', 'CIRCLE', 'ELLIPSE',
             'TRIANGLE', 'LINE', 'TEXT', 'IMAGE', 'ICON',
             'DYNAMIC_TEXT', 'GRAPH', 'RADIAL', 'LINE_GRAPH'
         ]
@@ -253,6 +253,7 @@ class TestDynamicTextElement:
         assert dtext.sensor_metric == "PERCENTAGE"
         assert dtext.show_unit is True
         assert dtext.interval == 1.0
+        assert dtext.force_static is False
     
     def test_to_dict(self):
         """Test dynamic text to_dict."""
@@ -260,12 +261,14 @@ class TestDynamicTextElement:
         dtext.sensor_type = "GPU"
         dtext.sensor_metric = "TEMPERATURE"
         dtext.interval = 2.0
+        dtext.force_static = True
         
         data = dtext.to_dict()
         
         assert data["type"] == "dynamic_text"
         assert data["sensor"] == "GPU.TEMPERATURE"
         assert data["interval"] == 2.0
+        assert data["force_static"] is True
 
 
 class TestCreateElement:

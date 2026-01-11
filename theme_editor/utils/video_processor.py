@@ -1,5 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """
-Video Processor Tool - PyAV Implementation
+Video Processor for Theme Editor - PyAV Implementation
 
 Processes videos for Turing Smart Screen themes using PyAV (bundled FFmpeg libraries).
 No separate FFmpeg installation required.
@@ -13,30 +14,27 @@ Features:
 - Audio removal
 - UI overlay baking
 
-Usage:
-    python tools/video_processor.py "path/to/theme/folder" "path/to/source_video.mp4"
+This module is used by the Theme Editor for video background processing.
 """
 
 import os
 import sys
-import argparse
 from pathlib import Path
 from fractions import Fraction
+import logging
 
 import av
 import numpy as np
 from PIL import Image
 
 # Add project root to path to allow imports
-sys.path.append(str(Path(__file__).parent.parent.resolve()))
+PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from library import config
 from library.ui_renderer import UiRenderer
 from library.log import logger
-import logging
-
-# Configure logger for this tool
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 def parse_time_string(time_str: str) -> float:
@@ -145,11 +143,14 @@ def apply_flip(frame_array: np.ndarray, flip: str) -> np.ndarray:
         return frame_array
 
 
-def resize_and_crop(frame_array: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
+def resize_and_crop(frame_array: np.ndarray, target_w: int, target_h: int, 
+                    crop_x: int = None, crop_y: int = None, 
+                    crop_w: int = None, crop_h: int = None) -> np.ndarray:
     """
-    Resize frame to fill target dimensions, then center-crop.
+    Resize frame and apply custom or center crop.
     
-    Uses PIL for high-quality resizing.
+    If crop_x/y/w/h are provided, they specify the crop rectangle in the resized image.
+    If not provided, center-crops to target_w/h.
     """
     img = Image.fromarray(frame_array)
     src_w, src_h = img.size
@@ -164,11 +165,27 @@ def resize_and_crop(frame_array: np.ndarray, target_w: int, target_h: int) -> np
     new_h = int(src_h * scale)
     img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
     
-    # Center crop
-    left = (new_w - target_w) // 2
-    top = (new_h - target_h) // 2
-    img = img.crop((left, top, left + target_w, top + target_h))
+    # Crop
+    if crop_x is not None and crop_y is not None and crop_w and crop_h:
+        # Custom crop (from editor)
+        # Note: crop_w/h might be same as target_w/h if not intentionally cropped differently
+        left = crop_x
+        top = crop_y
+        right = left + crop_w
+        bottom = top + crop_h
+    else:
+        # Default: Center crop
+        left = (new_w - target_w) // 2
+        top = (new_h - target_h) // 2
+        right = left + target_w
+        bottom = top + target_h
+        
+    img = img.crop((left, top, right, bottom))
     
+    # Final resize to display resolution (in case crop size differs)
+    if img.size != (target_w, target_h):
+        img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+        
     return np.array(img)
 
 
@@ -264,6 +281,12 @@ def process_video(theme_path_str: str, source_video_path: str, output_video_path
     start_offset = parse_time_string(video_bg.get('START_OFFSET', '00:00'))
     duration_str = video_bg.get('DURATION', None)
     
+    # Custom crop fields (standardized x, y, width, height)
+    crop_x = video_bg.get('x')
+    crop_y = video_bg.get('y')
+    crop_w = video_bg.get('width')
+    crop_h = video_bg.get('height')
+    
     # Initialize Renderer and get target dimensions
     renderer = UiRenderer(theme_data, theme_path)
     target_w = renderer.width
@@ -313,9 +336,9 @@ def process_video(theme_path_str: str, source_video_path: str, output_video_path
     if fade_frames > 0:
         logger.info(f"Crossfade: {loop_fade_duration}s ({fade_frames} frames)")
     
-    # First pass: decode all frames with transformations
-    logger.info("Decoding and transforming frames...")
-    all_frames = []
+    # --- Step 1: Cut (Decode raw frames with trim) ---
+    logger.info("Step 1: Decoding raw frames (Cut)...")
+    raw_frames = []
     frame_count = 0
     
     input_container.seek(int(start_offset * av.time_base))
@@ -333,60 +356,82 @@ def process_video(theme_path_str: str, source_video_path: str, output_video_path
         if frame_time >= end_time:
             break
         
-        # Convert to numpy array
+        # Convert to numpy array (RGB)
+        # We store RAW frames here. This might use significant memory for long videos.
+        # But it is required to Crossfade BEFORE Transform.
         frame_array = frame.to_ndarray(format='rgb24')
-        
-        # Apply transformations
-        frame_array = apply_rotation(frame_array, rotation)
-        frame_array = apply_flip(frame_array, flip)
-        frame_array = resize_and_crop(frame_array, target_w, target_h)
-        
-        all_frames.append(frame_array)
+        raw_frames.append(frame_array)
         frame_count += 1
         
         if frame_count % 100 == 0:
             logger.info(f"  Decoded {frame_count} frames...")
     
     input_container.close()
-    logger.info(f"Decoded {len(all_frames)} frames total")
+    logger.info(f"Decoded {len(raw_frames)} raw frames")
     
-    if len(all_frames) < 2:
-        logger.error("Not enough frames in video")
+    if not raw_frames:
+        logger.error("No frames decoded! Check start_offset/end_time.")
         return False
+
+    # --- Step 2: Crossfade (Loop) ---
+    # Apply crossfade to the raw sequence if requested
+    processed_raw_frames = raw_frames
     
-    # Apply crossfade loop if requested
-    if fade_frames > 0 and fade_frames < len(all_frames):
-        logger.info("Applying crossfade loop...")
+    if fade_frames > 0 and len(raw_frames) > fade_frames:
+        logger.info("Step 2: applying crossfade loop...")
+        # To create a seamless loop:
+        # We take the LAST fade_frames and blend them into the FIRST fade_frames.
+        # The resulting video will be length = len(raw) - fade_frames.
         
-        # Split frames
-        # Beginning segment (to be moved to end): first fade_frames
-        # Main body: everything after beginning
-        beginning_segment = all_frames[:fade_frames]
-        main_body = all_frames[fade_frames:]
+        overlap_start = raw_frames[:fade_frames]
+        overlap_end = raw_frames[-fade_frames:]
         
-        # New order: main_body + beginning_segment
-        # But we blend the junction: end of main_body fades to beginning_segment
+        # Blend end into start (Fade Out End / Fade In Start)
+        blended = crossfade_frames(overlap_end, overlap_start)
         
-        # Get frames to blend
-        # End of main_body (last fade_frames)
-        end_frames = main_body[-fade_frames:]
-        # Beginning segment (first fade_frames, now at the end)
-        start_frames = beginning_segment
+        # New sequence: [Blended] + [Middle part]
+        # Middle part is raw_frames[fade_frames : -fade_frames]
+        # Basically we removed the last chunk (overlap_end) and merged it into the first chunk.
         
-        # Create crossfade
-        blended = crossfade_frames(end_frames, start_frames)
+        middle_part = raw_frames[fade_frames:-fade_frames]
+        processed_raw_frames = blended + middle_part
         
-        # Reconstruct: main_body (without last fade_frames) + blended
-        all_frames = main_body[:-fade_frames] + blended
-        
-        logger.info(f"Crossfade applied, final frame count: {len(all_frames)}")
+        logger.info(f"Crossfade applied. Final frame count: {len(processed_raw_frames)}")
+    elif fade_frames > 0:
+        logger.warning(f"Video too short for crossfade ({len(raw_frames)} < {fade_frames}). Skipping crossfade.")
+
+    # --- Step 3 & 4: Transform & Bake ---
+    logger.info("Step 3 & 4: Transforming and Baking Overlay...")
+    final_frames = []
     
-    # Apply overlay to all frames
-    logger.info("Applying UI overlay...")
-    for i in range(len(all_frames)):
-        all_frames[i] = apply_overlay(all_frames[i], overlay_img)
-        if (i + 1) % 100 == 0:
-            logger.info(f"  Overlaid {i + 1} frames...")
+    for i, frame_array in enumerate(processed_raw_frames):
+        # a) Rotate
+        if rotation:
+            frame_array = apply_rotation(frame_array, rotation)
+        
+        # b) Flip
+        if flip:
+            frame_array = apply_flip(frame_array, flip)
+            
+        # c) Resize & Crop
+        frame_array = resize_and_crop(frame_array, target_w, target_h, 
+                                     crop_x, crop_y, crop_w, crop_h)
+        
+        # d) Bake Overlay
+        frame_array = apply_overlay(frame_array, overlay_img)
+        
+        final_frames.append(frame_array)
+        
+        if (i + 1) % 50 == 0:
+            logger.info(f"  Processed {i + 1}/{len(processed_raw_frames)} frames...")
+            
+    # --- Step 5: Encode ---
+    
+    # --- Step 5: Encode ---
+    
+    if len(final_frames) < 1:
+        logger.error("No frames to encode")
+        return False
     
     # Encode output video
     logger.info(f"Encoding output: {output_video_path}")
@@ -408,7 +453,7 @@ def process_video(theme_path_str: str, source_video_path: str, output_video_path
     }
     
     # Encode frames
-    for i, frame_array in enumerate(all_frames):
+    for i, frame_array in enumerate(final_frames):
         frame = av.VideoFrame.from_ndarray(frame_array, format='rgb24')
         frame = frame.reformat(format='yuv420p')
         
@@ -416,7 +461,7 @@ def process_video(theme_path_str: str, source_video_path: str, output_video_path
             output_container.mux(packet)
         
         if (i + 1) % 100 == 0:
-            logger.info(f"  Encoded {i + 1}/{len(all_frames)} frames...")
+            logger.info(f"  Encoded {i + 1}/{len(final_frames)} frames...")
     
     # Flush encoder
     for packet in output_stream.encode():
@@ -477,18 +522,3 @@ def update_theme_config(theme_path: Path, source_path: str, processed_path: str)
         
     except Exception as e:
         logger.error(f"Failed to update theme config: {e}")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Process videos for Turing Smart Screen themes using PyAV",
-        epilog="Example: python video_processor.py res/themes/MyTheme source.mp4 --output processed.mp4"
-    )
-    parser.add_argument("theme_path", help="Path to the theme directory")
-    parser.add_argument("video_path", help="Path to the source video file")
-    parser.add_argument("--output", help="Optional output path (default: source_processed.mp4)")
-    
-    args = parser.parse_args()
-    
-    success = process_video(args.theme_path, args.video_path, args.output)
-    sys.exit(0 if success else 1)
