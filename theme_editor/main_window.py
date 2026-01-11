@@ -555,7 +555,7 @@ class MainWindow(QMainWindow):
         try:
             yaml_io = ThemeYamlIO()
             theme_data = self._theme_model.to_data()
-            yaml_io.save(self._theme_name, theme_data)
+            yaml_io.save_all(self._theme_name, theme_data)
             
             self._undo_stack.setClean()
             self._status_bar.showMessage(f"Saved: {self._theme_name}")

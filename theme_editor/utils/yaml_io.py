@@ -48,7 +48,8 @@ class ThemeYamlIO:
         """
         Load theme data from YAML file.
         
-        Tries theme-v2.yaml first, falls back to theme.yaml.
+        Tries theme-editor.yaml first (editor format), then falls back to
+        theme.yaml (engine format) with automatic conversion.
         
         Args:
             theme_name: Name of theme folder
@@ -61,21 +62,21 @@ class ThemeYamlIO:
         """
         theme_path = self.THEMES_DIR / theme_name
         
-        # Try v2 format first
-        v2_file = theme_path / "theme-v2.yaml"
-        if v2_file.exists():
-            return self._load_v2(v2_file)
+        # Try editor format first
+        editor_file = theme_path / "theme-editor.yaml"
+        if editor_file.exists():
+            return self._load_editor_format(editor_file)
         
-        # Fall back to legacy format
+        # Fall back to engine format (theme.yaml) with conversion
         v1_file = theme_path / "theme.yaml"
         if v1_file.exists():
             return self._load_v1(v1_file)
         
         raise FileNotFoundError(f"No theme file found in {theme_path}")
     
-    def _load_v2(self, path: Path) -> Dict[str, Any]:
-        """Load theme-v2.yaml format."""
-        logger.info(f"Loading v2 theme: {path}")
+    def _load_editor_format(self, path: Path) -> Dict[str, Any]:
+        """Load theme-editor.yaml (editor format)."""
+        logger.info(f"Loading editor format theme: {path}")
         
         with open(path, 'r', encoding='utf-8') as f:
             if self._yaml:
@@ -93,9 +94,9 @@ class ThemeYamlIO:
             path: Path to theme.yaml
             
         Returns:
-            Theme data in v2 format
+            Theme data in editor format
         """
-        logger.info(f"Loading v1 theme (converting to v2): {path}")
+        logger.info(f"Loading engine format theme (converting to editor format): {path}")
         
         with open(path, 'r', encoding='utf-8') as f:
             v1_data = yaml.safe_load(f)
@@ -293,7 +294,10 @@ class ThemeYamlIO:
     
     def save(self, theme_name: str, data: Dict[str, Any]) -> None:
         """
-        Save theme data to theme-v2.yaml.
+        Save theme data to theme-editor.yaml (editor format only).
+        
+        For saving both editor format and engine-compatible format,
+        use save_all() instead.
         
         Args:
             theme_name: Name of theme folder
@@ -305,11 +309,11 @@ class ThemeYamlIO:
         # Copy external images to theme folder
         self._copy_external_images(data, theme_path)
         
-        v2_file = theme_path / "theme-v2.yaml"
+        editor_file = theme_path / "theme-editor.yaml"
         
-        logger.info(f"Saving theme: {v2_file}")
+        logger.info(f"Saving editor format: {editor_file}")
         
-        with open(v2_file, 'w', encoding='utf-8') as f:
+        with open(editor_file, 'w', encoding='utf-8') as f:
             if self._yaml:
                 self._yaml.dump(data, f)
             else:
@@ -319,6 +323,24 @@ class ThemeYamlIO:
                     sort_keys=False,
                     allow_unicode=True
                 )
+    
+    def save_all(self, theme_name: str, data: Dict[str, Any]) -> None:
+        """
+        Save theme data to both editor format and engine format.
+        
+        This method should be used when saving from the editor to ensure
+        the theme is compatible with the theming engine.
+        
+        Writes:
+        - theme-editor.yaml: Full editor state for reopening in editor
+        - theme.yaml: Engine-compatible format for the theming engine
+        
+        Args:
+            theme_name: Name of theme folder
+            data: Theme data dictionary
+        """
+        self.save(theme_name, data)       # Save theme-editor.yaml
+        self.export_v1(theme_name, data)  # Export theme.yaml
     
     def _copy_external_images(self, data: Dict[str, Any], theme_path: Path) -> None:
         """
