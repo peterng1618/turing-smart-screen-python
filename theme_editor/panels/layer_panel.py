@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QPushButton,
     QMenu, QStyledItemDelegate, QStyleOptionViewItem, QStyle
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QModelIndex, QPoint
+from PyQt6.QtCore import Qt, pyqtSignal, QModelIndex, QPoint, QItemSelection
 from PyQt6.QtGui import QUndoStack, QAction, QIcon, QPainter, QMouseEvent
 
 from theme_editor.models.theme_model import ThemeModel
@@ -83,18 +83,12 @@ class LayerPanel(QWidget):
         undo_stack: QUndoStack,
         parent: Optional[QWidget] = None
     ):
-        """
-        Initialize the layer panel.
-        
-        Args:
-            model: Theme data model
-            undo_stack: Undo stack for operations
-            parent: Parent widget
-        """
         super().__init__(parent)
+        self.setMinimumWidth(300)
         
         self._model = model
         self._undo_stack = undo_stack
+        self._updating_selection = False
         
         self._setup_ui()
         self._connect_signals()
@@ -166,6 +160,9 @@ class LayerPanel(QWidget):
     
     def _on_selection_changed(self) -> None:
         """Handle tree view selection change."""
+        if self._updating_selection:
+            return
+            
         indexes = self._tree_view.selectedIndexes()
         element_ids = [
             idx.data(ThemeModel.ElementIdRole)
@@ -185,17 +182,25 @@ class LayerPanel(QWidget):
         if not selection_model:
             return
         
-        selection_model.clearSelection()
-        
-        for elem_id in element_ids:
-            element = self._model.get_element(elem_id)
-            if element:
-                index = self._model._get_index_for_element(elem_id)
-                if index.isValid():
-                    selection_model.select(
-                        index,
-                        selection_model.SelectionFlag.Select
-                    )
+        self._updating_selection = True
+        try:
+            # Build new selection
+            new_selection = QItemSelection()
+            for elem_id in element_ids:
+                element = self._model.get_element(elem_id)
+                if element:
+                    index = self._model._get_index_for_element(elem_id)
+                    if index.isValid():
+                        new_selection.select(index, index)
+            
+            # Apply atomic update
+            selection_model.select(
+                new_selection,
+                selection_model.SelectionFlag.ClearAndSelect | selection_model.SelectionFlag.Rows
+            )
+            
+        finally:
+            self._updating_selection = False
     
     def _show_context_menu(self, pos: QPoint) -> None:
         """Show context menu at position."""

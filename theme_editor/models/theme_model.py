@@ -44,6 +44,7 @@ class ThemeModel(QAbstractItemModel):
     element_changed = pyqtSignal(str, str, object)  # element_id, property_name, new_value
     element_moved = pyqtSignal(str, int, int)  # element_id, new_x, new_y
     selection_changed = pyqtSignal(list)  # list of element_ids
+    guides_changed = pyqtSignal()
     
     # Custom role for element ID
     ElementIdRole = Qt.ItemDataRole.UserRole + 1
@@ -79,6 +80,10 @@ class ThemeModel(QAbstractItemModel):
         self._theme_name = ""
         self._theme_path: Optional[Path] = None
         self._author = ""
+        
+        # Guides (for editor only)
+        self._guides_h: List[int] = []
+        self._guides_v: List[int] = []
     
     # --- QAbstractItemModel Implementation ---
     
@@ -94,8 +99,14 @@ class ThemeModel(QAbstractItemModel):
                 return self.createIndex(row, column, element_id)
         else:
             # Child level
-            parent_id = parent.internalPointer()
-            parent_element = self._elements.get(parent_id)
+            try:
+                parent_id = parent.internalPointer()
+                if not isinstance(parent_id, str):
+                    return QModelIndex()
+                parent_element = self._elements.get(parent_id)
+            except Exception:
+                return QModelIndex()
+                
             if parent_element and 0 <= row < len(parent_element.children):
                 child_id = parent_element.children[row]
                 return self.createIndex(row, column, child_id)
@@ -107,8 +118,17 @@ class ThemeModel(QAbstractItemModel):
         if not index.isValid():
             return QModelIndex()
         
-        element_id = index.internalPointer()
-        element = self._elements.get(element_id)
+        try:
+            element_id = index.internalPointer()
+            # In some rare cases with C++ object deletion, internalPointer might return garbage
+            # causing standard python ops to fail with obscure errors like AttributeError: mro
+            if not isinstance(element_id, str):
+                return QModelIndex()
+                
+            element = self._elements.get(element_id)
+        except Exception:
+            # Catch AttributeError: mro or other corruption issues
+            return QModelIndex()
         
         if not element or not element.parent_id:
             return QModelIndex()
@@ -137,8 +157,14 @@ class ThemeModel(QAbstractItemModel):
         if not parent.isValid():
             return len(self._root_ids)
         
-        parent_id = parent.internalPointer()
-        parent_element = self._elements.get(parent_id)
+        try:
+            parent_id = parent.internalPointer()
+            if not isinstance(parent_id, str):
+                return 0
+            parent_element = self._elements.get(parent_id)
+        except Exception:
+            return 0
+            
         if parent_element:
             return len(parent_element.children)
         
@@ -153,8 +179,14 @@ class ThemeModel(QAbstractItemModel):
         if not index.isValid():
             return None
         
-        element_id = index.internalPointer()
-        element = self._elements.get(element_id)
+        try:
+            element_id = index.internalPointer()
+            if not isinstance(element_id, str):
+                return None
+            element = self._elements.get(element_id)
+        except Exception:
+            return None
+            
         if not element:
             return None
         
@@ -178,8 +210,14 @@ class ThemeModel(QAbstractItemModel):
         if not index.isValid():
             return False
         
-        element_id = index.internalPointer()
-        element = self._elements.get(element_id)
+        try:
+            element_id = index.internalPointer()
+            if not isinstance(element_id, str):
+                return False
+            element = self._elements.get(element_id)
+        except Exception:
+            return False
+            
         if not element:
             return False
         
@@ -200,6 +238,17 @@ class ThemeModel(QAbstractItemModel):
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
         """Get flags for item at index."""
         if not index.isValid():
+            return Qt.ItemFlag.NoItemFlags
+
+        try:
+            # Check if pointer is valid before returning flags
+            element_id = index.internalPointer()
+            if not isinstance(element_id, str):
+                return Qt.ItemFlag.NoItemFlags
+            # Just existence check
+            if not self._elements.get(element_id):
+                return Qt.ItemFlag.NoItemFlags
+        except Exception:
             return Qt.ItemFlag.NoItemFlags
         
         flags = (
@@ -230,7 +279,15 @@ class ThemeModel(QAbstractItemModel):
     def mimeData(self, indexes: List[QModelIndex]) -> QMimeData:
         """Encode dragged items."""
         mime_data = QMimeData()
-        element_ids = [idx.internalPointer() for idx in indexes if idx.isValid()]
+        element_ids = []
+        for idx in indexes:
+            if idx.isValid():
+                try:
+                    eid = idx.internalPointer()
+                    if isinstance(eid, str):
+                        element_ids.append(eid)
+                except Exception:
+                    pass
         mime_data.setData(
             "application/x-themeeditor-element",
             ",".join(element_ids).encode()
@@ -337,6 +394,18 @@ class ThemeModel(QAbstractItemModel):
         """Get all elements in the model."""
         return list(self._elements.values())
     
+    def get_all_children_ids(self, element_id: str) -> List[str]:
+        """Get all child IDs of an element recursively."""
+        element = self.get_element(element_id)
+        if not element or not hasattr(element, 'children'):
+            return []
+            
+        child_ids = []
+        for child_id in element.children:
+            child_ids.append(child_id)
+            child_ids.extend(self.get_all_children_ids(child_id))
+        return child_ids
+    
     def get_root_elements(self) -> List[Element]:
         """Get top-level elements in order."""
         return [self._elements[eid] for eid in self._root_ids if eid in self._elements]
@@ -360,6 +429,44 @@ class ThemeModel(QAbstractItemModel):
         if not hasattr(element, prop_name):
             return False
         
+        # Special scaling for Triangle width/height
+        if isinstance(element, TriangleElement) and prop_name in ("width", "height"):
+            xs = [element.x1, element.x2, element.x3]
+            ys = [element.y1, element.y2, element.y3]
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            old_w = max(1, max_x - min_x)
+            old_h = max(1, max_y - min_y)
+            
+            if prop_name == "width":
+                scale = value / old_w
+                element.x1 = max(-20000, min(20000, int(min_x + (element.x1 - min_x) * scale)))
+                element.x2 = max(-20000, min(20000, int(min_x + (element.x2 - min_x) * scale)))
+                element.x3 = max(-20000, min(20000, int(min_x + (element.x3 - min_x) * scale)))
+            else: # height
+                scale = value / old_h
+                element.y1 = max(-20000, min(20000, int(min_y + (element.y1 - min_y) * scale)))
+                element.y2 = max(-20000, min(20000, int(min_y + (element.y2 - min_y) * scale)))
+                element.y3 = max(-20000, min(20000, int(min_y + (element.y3 - min_y) * scale)))
+
+            # Signal changes for all affected properties
+            self.element_changed.emit(element_id, "x1", element.x1)
+            self.element_changed.emit(element_id, "y1", element.y1)
+            self.element_changed.emit(element_id, "x2", element.x2)
+            self.element_changed.emit(element_id, "y2", element.y2)
+            self.element_changed.emit(element_id, "x3", element.x3)
+            self.element_changed.emit(element_id, "y3", element.y3)
+            # We don't call setattr(element, prop_name) because 'width'/'height' 
+            # are virtual for triangels (derived from points)
+            return True
+
+        # Clamp value if it's a coordinate or size to avoid overflow
+        if prop_name in ("x", "y", "x1", "y1", "x2", "y2", "x3", "y3", "width", "height"):
+            value = max(-20000, min(20000, int(value)))
+        elif isinstance(value, (int, float)):
+            # General safe bound for 32-bit QSpinBox compatibility
+            value = max(-1000000, min(1000000, value))
+
         setattr(element, prop_name, value)
         self.element_changed.emit(element_id, prop_name, value)
         
@@ -465,6 +572,11 @@ class ThemeModel(QAbstractItemModel):
         """
         self.clear()
         
+        # Load guides
+        guides = data.get("editor_guides", {})
+        self._guides_h = guides.get("horizontal", [])
+        self._guides_v = guides.get("vertical", [])
+        
         # Load display settings
         display = data.get("display", {})
         self._display_size = display.get("DISPLAY_SIZE", "5\"")
@@ -505,6 +617,7 @@ class ThemeModel(QAbstractItemModel):
             if element:
                 self.add_element(element, parent_id=dynamic_group.id)
         
+        self.guides_changed.emit()
         logger.info("Loaded theme from data")
     
     def _parse_element(self, data: Dict[str, Any]) -> Optional[Element]:
@@ -551,6 +664,10 @@ class ThemeModel(QAbstractItemModel):
             },
             "ui_elements": [],
             "dynamic_elements": [],
+            "editor_guides": {
+                "horizontal": self._guides_h,
+                "vertical": self._guides_v,
+            },
         }
         
         if self._background_type == "video":
@@ -600,3 +717,22 @@ class ThemeModel(QAbstractItemModel):
         }
         w, h = sizes.get(self._display_size, (480, 800))
         return h if self._display_orientation == "portrait" else w
+
+    # --- Guides ---
+    
+    @property
+    def guides_h(self) -> List[int]:
+        """Get horizontal guides."""
+        return self._guides_h
+        
+    @property
+    def guides_v(self) -> List[int]:
+        """Get vertical guides."""
+        return self._guides_v
+        
+    def set_guides(self, horizontal: List[int], vertical: List[int]):
+        """Set guides and emit signal."""
+        # Remove duplicates and sort
+        self._guides_h = sorted(list(set(horizontal)))
+        self._guides_v = sorted(list(set(vertical)))
+        self.guides_changed.emit()

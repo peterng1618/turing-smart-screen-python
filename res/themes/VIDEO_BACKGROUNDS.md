@@ -450,7 +450,6 @@ Draws a vector icon. Supports automatic resolution of Font Awesome names and URL
 | `icon`    | String  | Hex code (`f015`), Name (`house`), or FA URL |
 | `link`    | String  | Optional: Direct URL to `.ttf` font file     |
 | `size`    | Integer | Icon size in pixels                          |
-| `scale`   | Float   | Scale multiplier (default 1.0)               |
 | `color`   | String  | Icon color (RGBA)                            |
 | `angle`   | Number  | Rotation angle                               |
 | `opacity` | Float   | Opacity 0.0 to 1.0                           |
@@ -488,7 +487,8 @@ Draws an image from a file.
 | `path`    | String  | Relative path to image file      |
 | `x`       | Integer | X coordinate                     |
 | `y`       | Integer | Y coordinate                     |
-| `scale`   | Float   | Scale factor (default 1.0)       |
+| `width`   | Integer | Width in pixels (optional)       |
+| `height`  | Integer | Height in pixels (optional)      |
 | `opacity` | Float   | Opacity 0.0 to 1.0 (default 1.0) |
 | `angle`   | Float   | Rotation angle in degrees        |
 | `outline` | Object  | Outline (stroke) configuration   |
@@ -499,7 +499,8 @@ Draws an image from a file.
     path: "icons/gpu_icon.png"
     x: 50
     y: 50
-    scale: 0.5
+    width: 64
+    height: 64
     opacity: 0.9
     angle: 0
     outline:

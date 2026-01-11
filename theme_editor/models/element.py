@@ -287,17 +287,11 @@ class ImageElement(Element):
     """Image element."""
     element_type: ElementType = field(default=ElementType.IMAGE, init=False)
     path: str = ""
-    scale: float = 1.0
     outline: Optional[Outline] = None
     
     def to_dict(self) -> Dict[str, Any]:
         data = super().to_dict()
         data["path"] = self.path
-        if self.scale != 1.0:
-            data["scale"] = self.scale
-        # Remove standard width/height (use scale instead)
-        data.pop("width", None)
-        data.pop("height", None)
         return data
 
 
@@ -308,7 +302,6 @@ class IconElement(Element):
     icon: str = "f015"  # Hex code or FontAwesome URL
     link: Optional[str] = None  # Direct font URL
     size: int = 24
-    scale: float = 1.0
     color: Tuple[int, int, int, int] = (255, 255, 255, 255)
     
     def to_dict(self) -> Dict[str, Any]:
@@ -317,8 +310,6 @@ class IconElement(Element):
         if self.link:
             data["link"] = self.link
         data["size"] = self.size
-        if self.scale != 1.0:
-            data["scale"] = self.scale
         data["color"] = f"{self.color[0]}, {self.color[1]}, {self.color[2]}, {self.color[3]}"
         return data
 
@@ -339,10 +330,12 @@ class GroupElement(Element):
 
 @dataclass
 class DynamicTextElement(Element):
-    """Dynamic text element bound to a sensor value."""
+    """Dynamic text element bound to sensor value(s)."""
     element_type: ElementType = field(default=ElementType.DYNAMIC_TEXT, init=False)
-    sensor_type: str = "CPU"  # CPU, GPU, MEMORY, DISK, NET, etc.
-    sensor_metric: str = "PERCENTAGE"  # PERCENTAGE, TEMPERATURE, FREQUENCY, etc.
+    text: str = "{CPU_PERCENTAGE:u}"  # Format string with {SENSOR_ID:flag}
+    # legacy fields
+    sensor_type: str = "CPU"
+    sensor_metric: str = "PERCENTAGE"
     show_unit: bool = True
     font: str = "roboto-mono/RobotoMono-Bold.ttf"
     font_size: int = 16
@@ -354,6 +347,9 @@ class DynamicTextElement(Element):
     def to_dict(self) -> Dict[str, Any]:
         data = super().to_dict()
         data["type"] = "dynamic_text"
+        data["text"] = self.text
+        # For backward compatibility with older viewers, we can still provide 'sensor'
+        # but the new implementation looks for 'text'
         data["sensor"] = f"{self.sensor_type}.{self.sensor_metric}"
         data["show_unit"] = self.show_unit
         data["font"] = self.font

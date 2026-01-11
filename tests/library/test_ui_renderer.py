@@ -73,7 +73,8 @@ class TestUiRenderer(unittest.TestCase):
                     'path': 'dummy.png',
                     'x': 0,
                     'y': 0,
-                    'scale': 0.5,
+                    'width': 50,
+                    'height': 50,
                     'opacity': 0.5
                 }]
                 overlay = self.renderer.generate_overlay()

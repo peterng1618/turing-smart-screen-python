@@ -98,6 +98,33 @@ class ChangePropertyCommand(QUndoCommand):
         )
 
 
+class ChangePropertiesCommand(QUndoCommand):
+    """Command for changing multiple element properties atomically."""
+    
+    def __init__(
+        self,
+        model: ThemeModel,
+        element_id: str,
+        old_values: Dict[str, Any],
+        new_values: Dict[str, Any],
+        text: str = "Change Properties",
+        parent: Optional[QUndoCommand] = None
+    ):
+        super().__init__(text, parent)
+        self._model = model
+        self._element_id = element_id
+        self._old_values = old_values
+        self._new_values = new_values
+    
+    def undo(self) -> None:
+        for prop, val in self._old_values.items():
+            self._model.set_element_property(self._element_id, prop, val)
+    
+    def redo(self) -> None:
+        for prop, val in self._new_values.items():
+            self._model.set_element_property(self._element_id, prop, val)
+
+
 class AddElementCommand(QUndoCommand):
     """Command for adding a new element."""
     

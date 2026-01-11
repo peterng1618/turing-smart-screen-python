@@ -7,6 +7,7 @@ babel~=2.17.0          # Date/time formatting
 ruamel.yaml~=0.18.16    # For configuration editor
 sv-ttk~=2.6.1          # Tk Sun Valley theme for configuration editor
 tkinter-tooltip~=3.1.2 # Tooltips for configuration editor
+PyQt6~=6.6.0           # For Theme Editor v2
 uptime~=3.0.1          # For System Uptime 
 requests~=2.32.5       # HTTP library
 ping3~=5.1.5           # ICMP ping implementation using raw socket

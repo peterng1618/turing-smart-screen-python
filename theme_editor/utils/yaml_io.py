@@ -222,6 +222,7 @@ class ThemeYamlIO:
                     element = {
                         "type": "dynamic_text",
                         "name": f"{sensor_type}_{metric}_TEXT",
+                        "text": f"{{{sensor_type}_{metric}:u}}",
                         "sensor": f"{sensor_type}.{metric}",
                         "x": text_cfg.get("X", 0),
                         "y": text_cfg.get("Y", 0),
@@ -301,6 +302,9 @@ class ThemeYamlIO:
         theme_path = self.THEMES_DIR / theme_name
         theme_path.mkdir(parents=True, exist_ok=True)
         
+        # Copy external images to theme folder
+        self._copy_external_images(data, theme_path)
+        
         v2_file = theme_path / "theme-v2.yaml"
         
         logger.info(f"Saving theme: {v2_file}")
@@ -315,6 +319,64 @@ class ThemeYamlIO:
                     sort_keys=False,
                     allow_unicode=True
                 )
+    
+    def _copy_external_images(self, data: Dict[str, Any], theme_path: Path) -> None:
+        """
+        Copy external images to theme folder and update paths.
+        
+        Checks ui_elements for image elements with paths outside the theme folder.
+        Copies them to theme/images/ and updates the path to be relative.
+        
+        Args:
+            data: Theme data dictionary (modified in place)
+            theme_path: Path to theme folder
+        """
+        import shutil
+        
+        images_dir = theme_path / "images"
+        
+        for elements_key in ["ui_elements", "dynamic_elements"]:
+            elements = data.get(elements_key, [])
+            for elem in elements:
+                if elem.get("type") != "image":
+                    continue
+                
+                path_str = elem.get("path", "")
+                if not path_str:
+                    continue
+                
+                path = Path(path_str)
+                
+                # Check if it's an external path (absolute or outside theme folder)
+                is_external = path.is_absolute()
+                if not is_external:
+                    # Check if relative path exists within theme
+                    full_path = theme_path / path
+                    is_external = not full_path.exists()
+                
+                if is_external and path.exists():
+                    # Copy to theme/images/ folder
+                    images_dir.mkdir(exist_ok=True)
+                    
+                    dest_filename = path.name
+                    dest_path = images_dir / dest_filename
+                    
+                    # Handle duplicate filenames
+                    counter = 1
+                    while dest_path.exists() and dest_path.read_bytes() != path.read_bytes():
+                        stem = path.stem
+                        suffix = path.suffix
+                        dest_filename = f"{stem}_{counter}{suffix}"
+                        dest_path = images_dir / dest_filename
+                        counter += 1
+                    
+                    if not dest_path.exists():
+                        logger.info(f"Copying external image: {path} -> {dest_path}")
+                        shutil.copy2(path, dest_path)
+                    
+                    # Update the element path to relative
+                    elem["path"] = f"images/{dest_filename}"
+
     
     def export_v1(self, theme_name: str, data: Dict[str, Any]) -> None:
         """

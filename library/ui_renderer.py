@@ -779,13 +779,8 @@ class UiRenderer:
         if new_w > 0 and new_h > 0:
             img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
             
-        # Scale support (optional extra scaling from config)
-        scale = icon_config.get('scale', 1.0)
-        if scale != 1.0:
-            new_w = int(img.width * scale)
-            new_h = int(img.height * scale)
-            if new_w > 0 and new_h > 0:
-                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        if new_w > 0 and new_h > 0:
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
             
         x = icon_config.get('x', 0)
         y = icon_config.get('y', 0)
@@ -866,12 +861,17 @@ class UiRenderer:
                         try:
                             ui_img = Image.open(full_path).convert('RGBA')
                             
-                            # Scale
-                            scale = config_item.get('scale', 1.0)
-                            if scale != 1.0:
-                                new_w = int(ui_img.width * scale)
-                                new_h = int(ui_img.height * scale)
-                                ui_img = ui_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                            # Resize to target width/height
+                            w = config_item.get('width')
+                            h = config_item.get('height')
+                            
+                            # If W/H not set (legacy themes?), default to original size
+                            if not w or not h:
+                                # Keep original dimensions
+                                pass
+                            else:
+                                if w != ui_img.width or h != ui_img.height:
+                                    ui_img = ui_img.resize((w, h), Image.Resampling.LANCZOS)
                             
                             # Apply Outline (Stroke)
                             outline_cfg = config_item.get('outline', {})

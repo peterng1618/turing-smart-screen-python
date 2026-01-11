@@ -231,7 +231,6 @@ ui_elements:
     x: 220                         # X coordinate
     y: 100                         # Y coordinate
     size: 30                       # Icon size in pixels
-    scale: 1.0                     # Scale multiplier (default 1.0)
     color: "70, 200, 130, 255"     # Icon color (RGBA: green)
     angle: 0                       # Rotation angle in degrees
     opacity: 1.0                   # Opacity multiplier
@@ -242,12 +241,13 @@ ui_elements:
       offset_y: 2                  # Shadow vertical offset
 
   # === IMAGE EXAMPLE ===
-  # Shows all supported properties for images including scale, outline, rotation, opacity, and shadow
+  # Shows all supported properties for images including width, height, outline, rotation, opacity, and shadow
   - type: image
     path: "logo.png"               # Image file path (relative to theme directory)
     x: 10                          # X coordinate
     y: 140                         # Y coordinate
-    scale: 0.5                     # Scaling factor (1.0 = original size, 0.5 = 50% size)
+    width: 60                      # Width (optional, default: native)
+    height: 60                     # Height (optional, default: native)
     angle: 0                       # Rotation angle in degrees
     opacity: 0.9                   # Opacity multiplier (0.0 to 1.0)
     outline:                       # Outline (stroke) configuration

@@ -30,9 +30,14 @@ import logging
 import os
 import platform
 import subprocess
+from pathlib import Path
 import sys
 import time
 import gc
+import threading
+import queue
+
+ui_queue = queue.Queue()
 
 try:
     import tkinter
@@ -75,6 +80,8 @@ config.load_theme()
 
 # For theme editor, always use simulated LCD
 config.CONFIG_DATA["display"]["REVISION"] = "SIMU"
+RULER_SIZE = 25
+GUIDE_COLOR = "#00ffff"  # Cyan
 
 from library.display import display  # Only import display after hardcoded config is set
 
@@ -103,10 +110,13 @@ def refresh_theme():
                 import cv2
                 
                 # Resolve video path
-                if not os.path.isabs(local_path):
-                    video_path = str(config.MAIN_DIRECTORY / local_path)
-                else:
-                    video_path = local_path
+                # 1. Try relative to theme folder (as saved by video_processor.py)
+                video_path = Path(config.THEME_DATA['PATH']) / local_path
+                if not video_path.exists():
+                    # 2. Try relative to project root
+                    video_path = config.MAIN_DIRECTORY / local_path
+                
+                video_path = str(video_path)
                 
                 if os.path.exists(video_path):
                     # Open video
@@ -197,6 +207,159 @@ def refresh_theme():
         stats.Ping.stats()
 
 
+def get_processed_video_path(local_path):
+    """Calculate the expected path for a processed video."""
+    if not local_path:
+        return None
+    path = Path(local_path)
+    return str(path.parent / f"{path.stem}_processed.mp4")
+
+
+def check_video_processing_needed():
+    """Check if the current video background needs processing."""
+    video_config = config.THEME_DATA.get('video_background', {})
+    if not video_config.get('ENABLE', False):
+        return False, None, None
+
+    local_path = video_config.get('LOCAL_PATH')
+    if not local_path:
+        return False, None, None
+
+    # Resolve video path
+    # 1. Try relative to theme folder
+    video_path = Path(config.THEME_DATA['PATH']) / local_path
+    if not video_path.exists():
+        # 2. Try relative to project root
+        video_path = config.MAIN_DIRECTORY / local_path
+
+    if not video_path.exists():
+        return False, None, None
+    
+    video_path = str(video_path)
+
+    # If it's already a processed file, we probably don't need to do anything
+    # unless it's missing or some other conditions are met.
+    # However, the user logic is: if LOCAL_PATH points to a raw video, we need to process it.
+    if "_processed.mp4" in local_path:
+        return False, None, None
+
+    processed_path = get_processed_video_path(video_path)
+    needed = not os.path.exists(processed_path)
+    
+    return needed, video_path, processed_path
+
+
+def run_video_processing(bake_btn):
+    """Run the video processor in a separate thread."""
+    # Lazy import to avoid requiring av module when not using video features
+    try:
+        from tools.video_processor import process_video, update_theme_config
+    except ImportError as e:
+        ui_queue.put(lambda: bake_btn.config(text="💀 PyAV not installed", fg="red"))
+        logger.error(f"Video processor unavailable: {e}")
+        return
+    
+    needed, video_path, processed_path = check_video_processing_needed()
+    if not video_path:
+        video_config = config.THEME_DATA.get('video_background', {})
+        local_path = video_config.get('SOURCE_PATH') or video_config.get('LOCAL_PATH')
+        if not local_path:
+            ui_queue.put(lambda: bake_btn.config(text="💀 No Source Video", fg="red"))
+            return
+        
+        # Resolve video path
+        # 1. Try relative to theme folder
+        video_path = Path(config.THEME_DATA['PATH']) / local_path
+        if not video_path.exists():
+            # 2. Try relative to project root
+            video_path = config.MAIN_DIRECTORY / local_path
+            
+        if not video_path.exists():
+            ui_queue.put(lambda: bake_btn.config(text="💀 Source Not Found", fg="red"))
+            return
+
+        video_path = str(video_path)
+        processed_path = get_processed_video_path(video_path)
+
+    def _worker():
+        try:
+            ui_queue.put(lambda: bake_btn.config(text="🔃 Baking UI Overlay...", fg="blue", state="disabled"))
+            
+            theme_path = config.THEME_DATA['PATH']
+            success = process_video(theme_path, video_path, processed_path)
+            
+            if success:
+                logger.info(f"Video processing complete: {processed_path}")
+                ui_queue.put(lambda: bake_btn.config(text="✅ Bake UI Overlay to Video", fg="green"))
+            else:
+                ui_queue.put(lambda: bake_btn.config(text="💀 Baking Failed", fg="red"))
+        except Exception as e:
+            logger.error(f"Error in video processing worker: {e}")
+            ui_queue.put(lambda: bake_btn.config(text=f"💀 Error: {str(e)[:20]}", fg="red"))
+        finally:
+            ui_queue.put(lambda: bake_btn.config(state="normal"))
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def draw_ruler(canvas, orientation, length, factor):
+    """Draw a ruler with ticks and numbers on a canvas."""
+    canvas.delete("all")
+    canvas.config(bg="#606060")
+    
+    # Draw background line
+    if orientation == "horizontal":
+        canvas.create_line(0, RULER_SIZE-1, length, RULER_SIZE-1, fill="white")
+    else:
+        canvas.create_line(RULER_SIZE-1, 0, RULER_SIZE-1, length, fill="white")
+
+    step = 50 / factor
+    if step < 10: step = 10
+    
+    # Ensure step is a multiple of 10 for clean look
+    step = (step // 10 + 1) * 10 
+    
+    for i in range(0, int(length * factor) + 1, 10):
+        pos = i / factor
+        
+        is_major = (i % step == 0)
+        is_medium = (i % (step/2) == 0) if step >= 20 else False
+        
+        tick_len = 5
+        if is_major: tick_len = 15
+        elif is_medium: tick_len = 10
+            
+        if orientation == "horizontal":
+            canvas.create_line(pos, RULER_SIZE - tick_len, pos, RULER_SIZE, fill="white")
+            if is_major:
+                canvas.create_text(pos + 2, 2, text=str(i), anchor="nw", font=("Arial", 7), fill="white")
+        else:
+            canvas.create_line(RULER_SIZE - tick_len, pos, RULER_SIZE, pos, fill="white")
+            if is_major:
+                # Vertical text
+                canvas.create_text(2, pos + 2, text=str(i), anchor="nw", font=("Arial", 7), fill="white")
+
+
+def save_guides(guides_h, guides_v):
+    """Save current guides to theme.yaml."""
+    import yaml
+    theme_file = config.THEME_DATA['PATH'] + "theme.yaml"
+    try:
+        with open(theme_file, 'r', encoding='utf-8') as f:
+            content = yaml.safe_load(f)
+        
+        content['editor_guides'] = {
+            'horizontal': [int(g) for g in guides_h],
+            'vertical': [int(g) for g in guides_v]
+        }
+        
+        with open(theme_file, 'w', encoding='utf-8') as f:
+            yaml.dump(content, f, default_flow_style=False, sort_keys=False)
+        logger.debug(f"Saved guides to {theme_file}")
+    except Exception as e:
+        logger.error(f"Failed to save guides: {e}")
+
+
 if __name__ == "__main__":
     def on_closing():
         logger.debug("Exit Theme Editor...")
@@ -216,7 +379,7 @@ if __name__ == "__main__":
         width = max(x0, x1) - min(x0, x1)
         height = max(y0, y1) - min(y0, y1)
         if width > 0 and height > 0:
-            label_zone.place(x=x + RGB_LED_MARGIN, y=y + RGB_LED_MARGIN, width=width, height=height)
+            label_zone.place(x=x + RGB_LED_MARGIN + RULER_SIZE, y=y + RGB_LED_MARGIN + RULER_SIZE, width=width, height=height)
         else:
             label_zone.place_forget()
 
@@ -344,10 +507,20 @@ if __name__ == "__main__":
         viewer = tkinter.Tk()
         viewer.title("Turing SysMon Theme Editor")
         viewer.iconphoto(True, tkinter.PhotoImage(file=config.MAIN_DIRECTORY / "res/icons/monitor-icon-17865/64.png"))
-        viewer.geometry(str(display_width + 2 * RGB_LED_MARGIN) + "x" + str(display_height + 2 * RGB_LED_MARGIN + 80))
+        
+        # Window geometry includes rulers
+        win_w = display_width + 2 * RGB_LED_MARGIN + RULER_SIZE
+        win_h = display_height + 2 * RGB_LED_MARGIN + RULER_SIZE + 60
+        viewer.geometry(f"{win_w}x{win_h}")
+        
         viewer.protocol("WM_DELETE_WINDOW", on_closing)
         viewer.call('wm', 'attributes', '.', '-topmost', '1')  # Preview window always on top
         viewer.config(cursor="cross")
+        viewer.resizable(False, False)  # Prevent window resize
+
+        # Load guides from theme
+        guides_h = config.THEME_DATA.get('editor_guides', {}).get('horizontal', [])
+        guides_v = config.THEME_DATA.get('editor_guides', {}).get('vertical', [])
 
         # Display RGB backplate LEDs color as background color
         led_color = config.THEME_DATA['display'].get("DISPLAY_RGB_LED", (255, 255, 255))
@@ -357,47 +530,210 @@ if __name__ == "__main__":
 
         circular_mask = Image.open(config.MAIN_DIRECTORY / "res/backgrounds/circular-mask.png")
 
-        # Display preview in the window
-        if not error_in_theme:
-            screen_image = display.lcd.screen_image
-            if config.THEME_DATA["display"].get("DISPLAY_SIZE", '3.5"') == '2.1"':
-                # This is a circular screen: apply a circle mask over the preview
-                screen_image.paste(circular_mask, mask=circular_mask)
-            display_image = ImageTk.PhotoImage(
-                screen_image.resize(
-                    (int(screen_image.width / RESIZE_FACTOR), int(screen_image.height / RESIZE_FACTOR))))
-        else:
-            size = display_width if display_width < display_height else display_height
-            display_image = ImageTk.PhotoImage(ERROR_IN_THEME.resize((size, size)))
-        viewer_picture = tkinter.Label(viewer, image=display_image, borderwidth=0)
-        viewer_picture.place(x=RGB_LED_MARGIN, y=RGB_LED_MARGIN)
+        # Rulers
+        top_ruler = tkinter.Canvas(viewer, height=RULER_SIZE, width=display_width, highlightthickness=0)
+        top_ruler.place(x=RGB_LED_MARGIN + RULER_SIZE, y=RGB_LED_MARGIN)
+        draw_ruler(top_ruler, "horizontal", display_width, RESIZE_FACTOR)
 
-        # Allow to click on preview to show coordinates and draw zones
-        viewer_picture.bind("<ButtonPress-1>", on_button1_press)
-        viewer_picture.bind("<B1-Motion>", on_button1_press_and_drag)
-        viewer_picture.bind("<ButtonRelease-1>", on_button1_release)
+        left_ruler = tkinter.Canvas(viewer, width=RULER_SIZE, height=display_height, highlightthickness=0)
+        left_ruler.place(x=RGB_LED_MARGIN, y=RGB_LED_MARGIN + RULER_SIZE)
+        draw_ruler(left_ruler, "vertical", display_height, RESIZE_FACTOR)
+
+        corner_box = tkinter.Frame(viewer, width=RULER_SIZE, height=RULER_SIZE, bg="#d0d0d0", borderwidth=1, relief="raised")
+        corner_box.place(x=RGB_LED_MARGIN, y=RGB_LED_MARGIN)
+
+        # Main preview canvas (instead of Label)
+        canvas_preview = tkinter.Canvas(viewer, width=display_width, height=display_height, highlightthickness=0, borderwidth=0)
+        canvas_preview.place(x=RGB_LED_MARGIN + RULER_SIZE, y=RGB_LED_MARGIN + RULER_SIZE)
+
+        def update_canvas_image():
+            global display_image
+            if not error_in_theme:
+                screen_image = display.lcd.screen_image
+                if config.THEME_DATA["display"].get("DISPLAY_SIZE", '3.5"') == '2.1"':
+                    screen_image.paste(circular_mask, mask=circular_mask)
+                resized_img = screen_image.resize((display_width, display_height), Image.Resampling.LANCZOS)
+                display_image = ImageTk.PhotoImage(resized_img)
+            else:
+                size = display_width if display_width < display_height else display_height
+                display_image = ImageTk.PhotoImage(ERROR_IN_THEME.resize((size, size)))
+            
+            canvas_preview.delete("preview_img")
+            canvas_preview.create_image(0, 0, anchor="nw", image=display_image, tags="preview_img")
+            redraw_guides()
+
+        def redraw_guides():
+            canvas_preview.delete("guide")
+            for y in guides_h:
+                canvas_preview.create_line(0, y / RESIZE_FACTOR, display_width, y / RESIZE_FACTOR, fill=GUIDE_COLOR, tags="guide", width=1)
+            for x in guides_v:
+                canvas_preview.create_line(x / RESIZE_FACTOR, 0, x / RESIZE_FACTOR, display_height, fill=GUIDE_COLOR, tags="guide", width=1)
+            canvas_preview.tag_raise("guide")
+
+        display_image = None
+        update_canvas_image()
+
+        # Hover cursor feedback for guides
+        def on_canvas_motion(event):
+            """Change cursor when hovering over a guide."""
+            mouse_x, mouse_y = event.x * RESIZE_FACTOR, event.y * RESIZE_FACTOR
+            threshold = 5 * RESIZE_FACTOR
+            
+            # Check if near any horizontal guide
+            for y in guides_h:
+                if abs(mouse_y - y) < threshold:
+                    viewer.config(cursor="sb_v_double_arrow")
+                    return
+            
+            # Check if near any vertical guide
+            for x in guides_v:
+                if abs(mouse_x - x) < threshold:
+                    viewer.config(cursor="sb_h_double_arrow")
+                    return
+            
+            # No guide nearby, use default cursor
+            viewer.config(cursor="cross")
+
+        canvas_preview.bind("<Motion>", on_canvas_motion)
+
+        # Guide Interaction Logic
+        def on_canvas_click(event):
+            # Check if clicked near a guide to drag it, otherwise handle zone drawing
+            click_x, click_y = event.x * RESIZE_FACTOR, event.y * RESIZE_FACTOR
+            
+            # Find closest guide
+            threshold = 5 * RESIZE_FACTOR
+            for i, y in enumerate(guides_h):
+                if abs(click_y - y) < threshold:
+                    viewer.config(cursor="sb_v_double_arrow")
+                    canvas_preview.bind("<B1-Motion>", lambda e, idx=i: move_guide_h(e, idx))
+                    canvas_preview.bind("<ButtonRelease-1>", on_guide_release)
+                    return
+            for i, x in enumerate(guides_v):
+                if abs(click_x - x) < threshold:
+                    viewer.config(cursor="sb_h_double_arrow")
+                    canvas_preview.bind("<B1-Motion>", lambda e, idx=i: move_guide_v(e, idx))
+                    canvas_preview.bind("<ButtonRelease-1>", on_guide_release)
+                    return
+            
+            # If no guide, handle zone drawing (reuse existing functions but adjust for canvas coords)
+            on_button1_press(event)
+            canvas_preview.bind("<B1-Motion>", on_button1_press_and_drag)
+            canvas_preview.bind("<ButtonRelease-1>", on_button1_release)
+
+        def move_guide_h(event, idx):
+            guides_h[idx] = event.y * RESIZE_FACTOR
+            redraw_guides()
+
+        def move_guide_v(event, idx):
+            guides_v[idx] = event.x * RESIZE_FACTOR
+            redraw_guides()
+
+        def on_guide_release(event):
+            viewer.config(cursor="cross")
+            save_guides(guides_h, guides_v)
+            canvas_preview.bind("<B1-Motion>", on_button1_press_and_drag)
+            canvas_preview.bind("<ButtonRelease-1>", on_button1_release)
+
+        def on_ruler_h_press(event):
+            # Start dragging a new horizontal guide from top ruler
+            guides_h.append(0)  # Start at top
+            idx = len(guides_h) - 1
+            
+            def on_motion(e):
+                # Update guide position as mouse moves
+                new_y = e.y_root - canvas_preview.winfo_rooty()
+                if 0 <= new_y <= display_height:
+                    guides_h[idx] = new_y * RESIZE_FACTOR
+                    redraw_guides()
+            
+            def on_release(e):
+                # Finalize guide or remove if outside bounds
+                final_y = e.y_root - canvas_preview.winfo_rooty()
+                if final_y < 0 or final_y > display_height:
+                    guides_h.pop(idx)
+                    redraw_guides()
+                else:
+                    guides_h[idx] = final_y * RESIZE_FACTOR
+                    save_guides(guides_h, guides_v)
+                viewer.config(cursor="cross")
+                top_ruler.unbind("<B1-Motion>")
+                top_ruler.unbind("<ButtonRelease-1>")
+            
+            top_ruler.bind("<B1-Motion>", on_motion)
+            top_ruler.bind("<ButtonRelease-1>", on_release)
+            viewer.config(cursor="sb_v_double_arrow")
+
+        def on_ruler_v_press(event):
+            # Start dragging a new vertical guide from left ruler
+            guides_v.append(0)  # Start at left
+            idx = len(guides_v) - 1
+            
+            def on_motion(e):
+                # Update guide position as mouse moves
+                new_x = e.x_root - canvas_preview.winfo_rootx()
+                if 0 <= new_x <= display_width:
+                    guides_v[idx] = new_x * RESIZE_FACTOR
+                    redraw_guides()
+            
+            def on_release(e):
+                # Finalize guide or remove if outside bounds
+                final_x = e.x_root - canvas_preview.winfo_rootx()
+                if final_x < 0 or final_x > display_width:
+                    guides_v.pop(idx)
+                    redraw_guides()
+                else:
+                    guides_v[idx] = final_x * RESIZE_FACTOR
+                    save_guides(guides_h, guides_v)
+                viewer.config(cursor="cross")
+                left_ruler.unbind("<B1-Motion>")
+                left_ruler.unbind("<ButtonRelease-1>")
+            
+            left_ruler.bind("<B1-Motion>", on_motion)
+            left_ruler.bind("<ButtonRelease-1>", on_release)
+            viewer.config(cursor="sb_h_double_arrow")
+
+        top_ruler.bind("<ButtonPress-1>", on_ruler_h_press)
+        left_ruler.bind("<ButtonPress-1>", on_ruler_v_press)
+        canvas_preview.bind("<ButtonPress-1>", on_canvas_click)
 
         # Allow to resize editor using mouse wheel or buttons
         viewer.bind_all("<MouseWheel>", on_mousewheel)
 
+        # Zoom and Bake UI row
+        zoom_w = int(display_width * 0.25)
+        bake_w = display_width - (zoom_w * 2)
+        
         zoom_plus_btn = tkinter.Button(viewer, text="Zoom +", command=lambda: on_zoom_plus())
-        zoom_plus_btn.place(x=RGB_LED_MARGIN, y=display_height + 2 * RGB_LED_MARGIN, height=30,
-                            width=int(display_width / 2))
+        zoom_plus_btn.place(x=RGB_LED_MARGIN + RULER_SIZE, y=display_height + 2 * RGB_LED_MARGIN + RULER_SIZE, height=30,
+                            width=zoom_w)
 
         zoom_minus_btn = tkinter.Button(viewer, text="Zoom -", command=lambda: on_zoom_minus())
-        zoom_minus_btn.place(x=int(display_width / 2) + RGB_LED_MARGIN, y=display_height + 2 * RGB_LED_MARGIN,
-                             height=30, width=int(display_width / 2))
+        zoom_minus_btn.place(x=RGB_LED_MARGIN + RULER_SIZE + zoom_w, y=display_height + 2 * RGB_LED_MARGIN + RULER_SIZE,
+                             height=30, width=zoom_w)
+
+        # Video Processing UI
+        needed, _, _ = check_video_processing_needed()
+        bake_btn_text = "Bake UI Overlay to Video"
+        btn_fg = "black"
+        if needed:
+            bake_btn_text = "⚠️ " + bake_btn_text + " (Recommended)"
+            btn_fg = "red"
+            
+        bake_btn = tkinter.Button(viewer, text=bake_btn_text, command=lambda: run_video_processing(bake_btn))
+        bake_btn.place(x=RGB_LED_MARGIN + RULER_SIZE + zoom_w * 2, y=display_height + 2 * RGB_LED_MARGIN + RULER_SIZE, height=30,
+                        width=bake_w)
+        
+        if needed:
+            bake_btn.config(fg=btn_fg, font=("TkDefaultFont", 9, "bold"))
 
         label_coord = tkinter.Label(viewer, text="Click or draw a zone to show coordinates")
-        label_coord.place(x=0, y=display_height + 2 * RGB_LED_MARGIN + 40,
-                          width=display_width + 2 * RGB_LED_MARGIN)
-
-        label_info = tkinter.Label(viewer, text="This preview will reload when theme file is updated")
-        label_info.place(x=0, y=display_height + 2 * RGB_LED_MARGIN + 60,
-                         width=display_width + 2 * RGB_LED_MARGIN)
+        label_coord.place(x=0, y=display_height + 2 * RGB_LED_MARGIN + RULER_SIZE + 35,
+                          width=display_width + 2 * RGB_LED_MARGIN + RULER_SIZE)
 
         label_zone = tkinter.Label(viewer, bg='#%02x%02x%02x' % tuple(map(lambda x: 255 - x, led_color)))
         label_zone.bind("<ButtonRelease-1>", on_zone_click)
+
         viewer.update()
 
         logger.debug(
@@ -420,18 +756,7 @@ if __name__ == "__main__":
                 display.lcd.screen_image.save(config.THEME_DATA['PATH'] + "preview.png", "PNG")
 
                 # Display new picture
-                if not error_in_theme:
-                    screen_image = display.lcd.screen_image
-                    if config.THEME_DATA["display"].get("DISPLAY_SIZE", '3.5"') == '2.1"':
-                        # This is a circular screen: apply a circle mask over the preview
-                        screen_image.paste(circular_mask, mask=circular_mask)
-                    display_image = ImageTk.PhotoImage(
-                        screen_image.resize(
-                            (int(screen_image.width / RESIZE_FACTOR), int(screen_image.height / RESIZE_FACTOR))))
-                else:
-                    size = display_width if display_width < display_height else display_height
-                    display_image = ImageTk.PhotoImage(ERROR_IN_THEME.resize((size, size)))
-                viewer_picture.config(image=display_image)
+                update_canvas_image()
 
                 # Refresh RGB backplate LEDs color
                 led_color = config.THEME_DATA['display'].get("DISPLAY_RGB_LED", (255, 255, 255))
@@ -440,7 +765,30 @@ if __name__ == "__main__":
                 viewer.configure(bg='#%02x%02x%02x' % led_color)
                 label_zone.configure(bg='#%02x%02x%02x' % tuple(map(lambda x: 255 - x, led_color)))
 
-            # Regularly update the viewer window even if content unchanged, or it will appear as "not responding"
+            # Handle UI tasks from other threads
+            while not ui_queue.empty():
+                try:
+                    task = ui_queue.get_nowait()
+                    task()
+                except queue.Empty:
+                    break
+            
+            # Update Bake button status periodically
+            if 'bake_btn' in locals() and bake_btn.cget("state") != "disabled":
+                needed, _, _ = check_video_processing_needed()
+                current_text = bake_btn.cget("text")
+                is_red = bake_btn.cget("fg") == "red"
+                
+                if needed:
+                    if not is_red or "Recommended" not in current_text:
+                        bake_btn.config(text="⚠️ Bake UI Overlay to Video (Recommended)", fg="red", font=("TkDefaultFont", 9, "bold"))
+                elif not needed:
+                    # If it was marked as recommended or failed/processing, but now not needed
+                    if is_red or "🔃" in current_text or "⚠️" in current_text:
+                        # Only reset to normal if not already in a special state like success ✅
+                        if "✅" not in current_text:
+                            bake_btn.config(text="Bake UI Overlay to Video", fg="black", font=("TkDefaultFont", 9, "normal"))
+
             viewer.update()
 
             time.sleep(0.1)
