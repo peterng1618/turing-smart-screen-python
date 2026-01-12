@@ -213,6 +213,7 @@ class PropertiesPanel(QWidget):
         # Type-specific properties
         if isinstance(element, TextElement) or isinstance(element, DynamicTextElement):
             self._add_typography_group(element)
+            self._add_outline_section(element)
             
             if isinstance(element, ImageElement):
                 self._add_image_group(element)
@@ -1235,7 +1236,17 @@ class PropertiesPanel(QWidget):
         
         # Dash array (optional)
         dash_edit = QLineEdit()
-        dash_text = ", ".join(str(d) for d in element.outline.dash_array) if element.outline and element.outline.dash_array else ""
+        dash_text = ""
+        if element.outline and element.outline.dash_array:
+            # Format numbers to look nice (remove .0 if integer)
+            parts = []
+            for d in element.outline.dash_array:
+                if isinstance(d, float) and d.is_integer():
+                    parts.append(str(int(d)))
+                else:
+                    parts.append(str(d))
+            dash_text = ", ".join(parts)
+        
         dash_edit.setText(dash_text)
         dash_edit.setPlaceholderText("e.g. 10, 5")
         dash_edit.textChanged.connect(self._on_outline_dash_changed)
@@ -1298,8 +1309,19 @@ class PropertiesPanel(QWidget):
         # Parse dash array
         try:
             if text.strip():
-                dash_array = [float(d.strip()) for d in text.split(",") if d.strip()]
-                element.outline.dash_array = dash_array
+                # Split and parse numbers
+                values = []
+                for d in text.split(","):
+                    d_str = d.strip()
+                    if not d_str:
+                        continue
+                    val = float(d_str)
+                    # Use integer if it's a whole number
+                    if val.is_integer():
+                        values.append(int(val))
+                    else:
+                        values.append(val)
+                element.outline.dash_array = values
             else:
                 element.outline.dash_array = None
         except ValueError:

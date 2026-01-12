@@ -492,39 +492,46 @@ class ElementItem(QGraphicsObject):
             dx = new_pos.x() - old_pos.x()
             dy = new_pos.y() - old_pos.y()
             
-            # Sync element's absolute coordinates
+            # Sync element's absolute coordinates via Model
             if self._element.element_type == ElementType.TRIANGLE:
-                 self._element.x1 += int(dx)
-                 self._element.y1 += int(dy)
-                 self._element.x2 += int(dx)
-                 self._element.y2 += int(dy)
-                 self._element.x3 += int(dx)
-                 self._element.y3 += int(dy)
+                 # Calculate new values
+                 # Notes: Triangle uses x1..y3, not x/y directly for positioning
+                 # We must update all points relative to the move
+                 new_x1 = self._element.x1 + int(dx)
+                 new_y1 = self._element.y1 + int(dy)
+                 new_x2 = self._element.x2 + int(dx)
+                 new_y2 = self._element.y2 + int(dy)
+                 new_x3 = self._element.x3 + int(dx)
+                 new_y3 = self._element.y3 + int(dy)
                  
-                 # Emit signals for property panel
-                 self._model.element_changed.emit(self._element.id, "x1", self._element.x1)
-                 self._model.element_changed.emit(self._element.id, "y1", self._element.y1)
-                 self._model.element_changed.emit(self._element.id, "x2", self._element.x2)
-                 self._model.element_changed.emit(self._element.id, "y2", self._element.y2)
-                 self._model.element_changed.emit(self._element.id, "x3", self._element.x3)
-                 self._model.element_changed.emit(self._element.id, "y3", self._element.y3)
+                 # Setup block signals or batch update if possible, but for now serial calls or batching
+                 # The model doesn't have a batch update yet, so we call individually
+                 # To prevent jitter, we could suppress updates or rely on Qt's coalescing
+                 self._model.set_element_property(self._element.id, "x1", new_x1)
+                 self._model.set_element_property(self._element.id, "y1", new_y1)
+                 self._model.set_element_property(self._element.id, "x2", new_x2)
+                 self._model.set_element_property(self._element.id, "y2", new_y2)
+                 self._model.set_element_property(self._element.id, "x3", new_x3)
+                 self._model.set_element_property(self._element.id, "y3", new_y3)
+
             elif self._element.element_type == ElementType.LINE:
-                 self._element.x += int(dx)
-                 self._element.y += int(dy)
-                 self._element.x2 += int(dx)
-                 self._element.y2 += int(dy)
+                 # Line uses x,y and x2,y2
+                 new_x = self._element.x + int(dx)
+                 new_y = self._element.y + int(dy)
+                 new_x2 = self._element.x2 + int(dx)
+                 new_y2 = self._element.y2 + int(dy)
                  
-                 # Emit signals
-                 self._model.element_changed.emit(self._element.id, "x", self._element.x)
-                 self._model.element_changed.emit(self._element.id, "y", self._element.y)
-                 self._model.element_changed.emit(self._element.id, "x2", self._element.x2)
-                 self._model.element_changed.emit(self._element.id, "y2", self._element.y2)
+                 self._model.set_element_property(self._element.id, "x", new_x)
+                 self._model.set_element_property(self._element.id, "y", new_y)
+                 self._model.set_element_property(self._element.id, "x2", new_x2)
+                 self._model.set_element_property(self._element.id, "y2", new_y2)
+
             else:
-                self._element.x = int(new_pos.x())
-                self._element.y = int(new_pos.y())
-                # Emit signal (minimal)
-                self._model.element_changed.emit(self._element.id, "x", self._element.x)
-                self._model.element_changed.emit(self._element.id, "y", self._element.y)
+                # Standard element uses x,y
+                new_x = int(new_pos.x())
+                new_y = int(new_pos.y())
+                # Use move_element for semantic clarity and potential optimization
+                self._model.move_element(self._element.id, new_x, new_y)
                 
         return super().itemChange(change, value)
 
@@ -1205,24 +1212,27 @@ class ElementItem(QGraphicsObject):
                         new_y = int(other_p.y() + dist * math.sin(snapped_rad))
                         
                         if handle == 'start':
-                            self._element.x, self._element.y = new_x, new_y
+                            self._model.move_element(self._element.id, new_x, new_y)
                         else:
-                            self._element.x2, self._element.y2 = new_x, new_y
+                            self._model.set_element_property(self._element.id, "x2", new_x)
+                            self._model.set_element_property(self._element.id, "y2", new_y)
                 else:
                     # Line uses scene delta for start/end handles directly
                     delta_scene = event.scenePos() - event.lastScenePos()
                     if handle == 'start':
-                        self._element.x += int(delta_scene.x())
-                        self._element.y += int(delta_scene.y())
+                        # x,y handled by move_element or property set?
+                        # Manual calculation:
+                        new_x = self._element.x + int(delta_scene.x())
+                        new_y = self._element.y + int(delta_scene.y())
+                        self._model.move_element(self._element.id, new_x, new_y)
                     elif handle == 'end':
-                        self._element.x2 += int(delta_scene.x())
-                        self._element.y2 += int(delta_scene.y())
+                        new_x2 = self._element.x2 + int(delta_scene.x())
+                        new_y2 = self._element.y2 + int(delta_scene.y())
+                        self._model.set_element_property(self._element.id, "x2", new_x2)
+                        self._model.set_element_property(self._element.id, "y2", new_y2)
                 
-                # Clamp coordinates to avoid overflow
-                self._element.x = max(-20000, min(20000, self._element.x))
-                self._element.y = max(-20000, min(20000, self._element.y))
-                self._element.x2 = max(-20000, min(20000, self._element.x2))
-                self._element.y2 = max(-20000, min(20000, self._element.y2))
+                # Clamp coordinates to avoid overflow (Model handles this, but we can do it too or let model do it)
+                # self._element.x = ... (Model handles clamping)
                 
                 self.prepareGeometryChange()
                 self.update_from_element()
@@ -1245,15 +1255,15 @@ class ElementItem(QGraphicsObject):
                     self._element.y1 = int(anchor_y + (self._resize_start_pts[0][1] - anchor_y) * scale_y)
                     self._element.x2 = int(anchor_x + (self._resize_start_pts[1][0] - anchor_x) * scale_x)
                     self._element.y2 = int(anchor_y + (self._resize_start_pts[1][1] - anchor_y) * scale_y)
-                    self._element.x3 = int(anchor_x + (self._resize_start_pts[2][0] - anchor_x) * scale_x)
                     self._element.y3 = int(anchor_y + (self._resize_start_pts[2][1] - anchor_y) * scale_y)
 
-                # Signal changes for all affected properties
-                for p in ["x1", "y1", "x2", "y2", "x3", "y3"]:
-                    val = getattr(self._element, p)
-                    val = max(-20000, min(20000, val))
-                    setattr(self._element, p, val)
-                    self._model.element_changed.emit(self._element.id, p, val)
+                # Update via Model
+                self._model.set_element_property(self._element.id, "x1", self._element.x1)
+                self._model.set_element_property(self._element.id, "y1", self._element.y1)
+                self._model.set_element_property(self._element.id, "x2", self._element.x2)
+                self._model.set_element_property(self._element.id, "y2", self._element.y2)
+                self._model.set_element_property(self._element.id, "x3", self._element.x3)
+                self._model.set_element_property(self._element.id, "y3", self._element.y3)
                 
                 self.prepareGeometryChange()
                 self.update_from_element()
@@ -1293,8 +1303,23 @@ class ElementItem(QGraphicsObject):
         if self._rotating:
             self._rotating = False
             self._resize_handle = None
-            # Update element angle
-            self._element.angle = self.rotation()
+            # Update element angle via model (triggers undo command via property panel? No, interactive usually needs explicit command?)
+            # Wait, interactive rotation usually ends with a command?
+            # Existing code just set self._element.angle. 
+            # If we want undo support, we should push a command here or use set_element_property.
+            # set_element_property pushes undo? No, set_element_property is low level. 
+            # Commands use set_element_property.
+            # Ideally we should push a ChangePropertyCommand here.
+            # But for "Single Source of Truth", we first need to ensure the Model is updated.
+            # If we push a command, it will allow undo.
+            # Let's check how resize does it.
+            # Resize (triangle) pushes ChangePropertiesCommand.
+            # Rect/Circle resize just sets attrs?
+            # Lines 1333 just set width/height. This means Rect resize wasn't undoable?
+            # Or maybe `finish_on_canvas_editing` is separate.
+            # I will just switch to set_element_property for now to satisfy the "Model is Truth" requirement.
+            # Undo support is a separate concern but closely related.
+            self._model.set_element_property(self._element.id, "angle", self.rotation())
             event.accept()
             return
         
@@ -1320,15 +1345,15 @@ class ElementItem(QGraphicsObject):
                 cmd = ChangePropertiesCommand(self._model, self._element.id, old_vals, new_vals, "Resize Triangle")
                 self._model._undo_stack.push(cmd)
             else:
-                self._element.width = int(rect.width())
-                self._element.height = int(rect.height())
+                self._model.set_element_property(self._element.id, "width", int(rect.width()))
+                self._model.set_element_property(self._element.id, "height", int(rect.height()))
                 
                 # Adjust position if top-left changed
                 if rect.left() != 0 or rect.top() != 0:
                     new_pos = self.pos() + rect.topLeft()
                     self.setPos(new_pos)
-                    self._element.x = int(new_pos.x())
-                    self._element.y = int(new_pos.y())
+                    # Use move_element
+                    self._model.move_element(self._element.id, int(new_pos.x()), int(new_pos.y()))
                     self.setRect(0, 0, rect.width(), rect.height())
             
             event.accept()

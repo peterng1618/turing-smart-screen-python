@@ -10,11 +10,14 @@ Uses ruamel.yaml to preserve comments and formatting where possible.
 """
 
 import os
+import shutil
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
+
+from PyQt6.QtCore import QTemporaryFile, QIODevice
 
 logger = logging.getLogger(__name__)
 
@@ -366,16 +369,7 @@ class ThemeYamlIO:
         
         logger.info(f"Saving editor format: {editor_file}")
         
-        with open(editor_file, 'w', encoding='utf-8') as f:
-            if self._yaml:
-                self._yaml.dump(data, f)
-            else:
-                yaml.dump(
-                    data, f,
-                    default_flow_style=False,
-                    sort_keys=False,
-                    allow_unicode=True
-                )
+        self._atomic_write(editor_file, data)
     
     def save_all(self, theme_name: str, data: Dict[str, Any], source_theme_path: Optional[Path] = None) -> None:
         """
@@ -395,6 +389,108 @@ class ThemeYamlIO:
         """
         self.save(theme_name, data, source_theme_path)  # Save theme-editor.yaml
         self.export_v1(theme_name, data)                # Export theme.yaml
+
+    def _atomic_write(self, target_path: Path, data: Dict[str, Any]) -> None:
+        """
+        Write data to target_path atomically using QTemporaryFile.
+        
+        Args:
+            target_path: Destination path
+            data: Data to write (serialized via yaml)
+        """
+        logger.info(f"Atomic write start for {target_path}")
+        # Create temporary file in the same directory as target to ensure atomic move
+        # template: name.XXXXXX.tmp
+        temp_file = QTemporaryFile(str(target_path.parent / "temp_save.XXXXXX.yaml"))
+        temp_file.setAutoRemove(False) # We will handle removal/move
+        
+        if not temp_file.open():
+            logger.error(f"Failed to create temp file for saving {target_path}")
+            raise IOError("Could not create temporary save file")
+        
+        try:
+            # Get the path now, because sometimes it's tricky after close depending on OS?
+            # actually fileName() works as long as object lives.
+            temp_path = Path(temp_file.fileName())
+            logger.info(f"Temp file created at {temp_path}")
+            
+            # Serialize data to string first
+            import io
+            stream = io.StringIO()
+            if self._yaml:
+                self._yaml.dump(data, stream)
+            else:
+                yaml.dump(
+                    data, stream,
+                    default_flow_style=False,
+                    sort_keys=False,
+                    allow_unicode=True
+                )
+            
+            content = stream.getvalue().encode('utf-8')
+            
+            # Write bytes
+            bytes_written = temp_file.write(content)
+            if bytes_written == -1:
+                 raise IOError(f"Failed to write to temp file: {temp_file.errorString()}")
+            
+            # Flush and Close
+            temp_file.flush()
+            temp_file.close()
+            
+            # Check if write was successful (size?)
+            if temp_path.stat().st_size == 0 and len(content) > 0:
+                raise IOError("Temp file is empty after write!")
+            
+            # Backup original if exists
+            backup_path = None
+            if target_path.exists():
+                logger.info(f"Target exists, creating backup...")
+                backup_path = target_path.with_suffix(target_path.suffix + ".bak")
+                # Remove old backup if exists
+                if backup_path.exists():
+                    logger.info(f"Removing old backup {backup_path}")
+                    backup_path.unlink()
+                # Rename current to backup
+                logger.info(f"Moving {target_path} to {backup_path}")
+                shutil.move(target_path, backup_path)
+            else:
+                logger.info(f"Target {target_path} does not exist, no backup needed.")
+            
+            # Rename temp to target using QTemporaryFile.rename to handle locks/lifecycle correctly
+            # This promotes the temporary file to a permanent file and detaches auto-deletion.
+            logger.info(f"Renaming temp file to {target_path}")
+            if not temp_file.rename(str(target_path)):
+                error_msg = f"Failed to rename temp file to {target_path}: {temp_file.errorString()}"
+                logger.error(error_msg)
+                # Fallback? If rename fails, maybe use shutil if we close? 
+                # But rename should work if target (which we just backed up) is gone.
+                # If target wasn't backed up (didn't exist), it should also work.
+                
+                # If rename failed, valid reason could be target exists (race condition?)
+                # or still open? rename() closes it implicitly or requires close?
+                # "The file is closed before it is renamed." - Qt Docs
+                
+                # Retrying with shutil after ensuring destruction of QObject?
+                # But we are in the middle of using it.
+                
+                raise IOError(error_msg)
+                
+            logger.info(f"Successfully saved to {target_path}")
+            
+        except Exception as e:
+            logger.error(f"Atomic save failed: {e}")
+            # Try to restore backup if we moved it
+            if 'backup_path' in locals() and backup_path and backup_path.exists() and not target_path.exists():
+                 logger.info("Restoring backup...")
+                 shutil.move(backup_path, target_path)
+            
+            if 'temp_path' in locals() and temp_path.exists():
+                 try:
+                     temp_path.unlink()
+                 except: pass
+
+            raise e
     
     def _copy_external_assets(self, data: Dict[str, Any], theme_path: Path, source_theme_path: Optional[Path] = None) -> None:
         """
@@ -523,13 +619,7 @@ class ThemeYamlIO:
         
         logger.info(f"Exporting v1 theme: {v1_file}")
         
-        with open(v1_file, 'w', encoding='utf-8') as f:
-            yaml.dump(
-                v1_data, f,
-                default_flow_style=False,
-                sort_keys=False,
-                allow_unicode=True
-            )
+        self._atomic_write(v1_file, v1_data)
     
     def _convert_v2_to_v1(self, v2: Dict[str, Any]) -> Dict[str, Any]:
         """

@@ -274,6 +274,7 @@ class TextElement(Element):
     color: Tuple[int, int, int, int] = (255, 255, 255, 255)
     align: str = "left"  # "left", "center", "right"
     anchor: str = "lt"  # Pillow anchor
+    outline: Optional[Outline] = None
     
     def to_dict(self) -> Dict[str, Any]:
         data = super().to_dict()
@@ -285,6 +286,15 @@ class TextElement(Element):
             data["align"] = self.align
         if self.anchor != "lt":
             data["anchor"] = self.anchor
+        if self.outline:
+            data["outline"] = {
+                "width": self.outline.width,
+                "color": f"{self.outline.color[0]}, {self.outline.color[1]}, {self.outline.color[2]}, {self.outline.color[3]}",
+            }
+            if self.outline.dash_array:
+                data["outline"]["dash_array"] = self.outline.dash_array
+            if self.outline.cap != "butt":
+                data["outline"]["cap"] = self.outline.cap
         return data
 
 
@@ -350,6 +360,7 @@ class DynamicTextElement(Element):
     anchor: str = "lt"
     interval: float = 1.0
     force_static: bool = False
+    outline: Optional[Outline] = None
     
     def to_dict(self) -> Dict[str, Any]:
         data = super().to_dict()
@@ -366,6 +377,15 @@ class DynamicTextElement(Element):
         data["anchor"] = self.anchor
         data["interval"] = self.interval
         data["force_static"] = self.force_static
+        if self.outline:
+            data["outline"] = {
+                "width": self.outline.width,
+                "color": f"{self.outline.color[0]}, {self.outline.color[1]}, {self.outline.color[2]}, {self.outline.color[3]}",
+            }
+            if self.outline.dash_array:
+                data["outline"]["dash_array"] = self.outline.dash_array
+            if self.outline.cap != "butt":
+                data["outline"]["cap"] = self.outline.cap
         return data
 
 

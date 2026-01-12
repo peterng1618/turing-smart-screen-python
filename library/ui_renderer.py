@@ -710,6 +710,14 @@ class UiRenderer:
         x = text_config.get('x', 0)
         y = text_config.get('y', 0)
         
+        # Apply outline if configured
+        outline_cfg = text_config.get('outline')
+        if outline_cfg:
+            img, px, py = self._apply_image_outline(img, outline_cfg)
+            # Adjust position to account for padding added by outline
+            x -= px
+            y -= py
+
         return img, (x, y)
 
     def draw_icon_to_image(self, icon_config, sampling=1):
@@ -785,6 +793,13 @@ class UiRenderer:
         x = icon_config.get('x', 0)
         y = icon_config.get('y', 0)
         
+        # Apply outline if configured
+        outline_cfg = icon_config.get('outline')
+        if outline_cfg:
+            img, px, py = self._apply_image_outline(img, outline_cfg)
+            x -= px
+            y -= py
+            
         return img, (x, y)
 
     def apply_element_styling(self, canvas, img, x, y, config_item):

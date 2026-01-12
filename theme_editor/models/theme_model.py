@@ -912,25 +912,79 @@ class ThemeModel(QAbstractItemModel):
         elif self._background_type == "video":
              data["video_background"] = self._video_config
         
-        # Find UI Elements and Dynamic Elements groups
+        # Helper to recursively get children of a group as a flat list of dicts
+        def _get_group_children_recursive(group_element, target_list):
+             if hasattr(group_element, 'children'):
+                for child_id in group_element.children:
+                    child = self._elements.get(child_id)
+                    if child:
+                        if child.element_type == ElementType.GROUP:
+                             _get_group_children_recursive(child, target_list)
+                        else:
+                             target_list.append(child.to_dict())
+
+        # Collect elements from root
         for elem_id in self._root_ids:
             element = self._elements.get(elem_id)
             if not element:
                 continue
             
-            if element.name == "UI Elements":
-                for child_id in element.children:
-                    child = self._elements.get(child_id)
-                    if child and child.element_type not in [ElementType.BACKGROUND_IMAGE, ElementType.BACKGROUND_VIDEO]:
-                        data["ui_elements"].append(child.to_dict())
-            elif element.name == "Dynamic Elements":
-                for child_id in element.children:
-                    child = self._elements.get(child_id)
-                    if child:
-                        data["dynamic_elements"].append(child.to_dict())
+            # Skip special singletons (handled above)
+            if element.element_type in (ElementType.BACKGROUND_IMAGE, ElementType.BACKGROUND_VIDEO, ElementType.THEME_INFO):
+                continue
+                
+            # Check for legacy named groups "UI Elements" and "Dynamic Elements"
+            # We preserve their content into the respective flat lists for compatibility
+            if element.name == "UI Elements" and element.element_type == ElementType.GROUP:
+                _get_group_children_recursive(element, data["ui_elements"])
+                continue
+            elif element.name == "Dynamic Elements" and element.element_type == ElementType.GROUP:
+                _get_group_children_recursive(element, data["dynamic_elements"])
+                continue
+            
+            # Identify where this root element belongs based on type
+            is_dynamic = element.element_type in (
+                ElementType.DYNAMIC_TEXT, 
+                ElementType.GRAPH, 
+                ElementType.RADIAL, 
+                ElementType.LINE_GRAPH
+            )
+            
+            if is_dynamic:
+                data["dynamic_elements"].append(element.to_dict())
+            else:
+                # Groups (other than special ones), Shapes, Text, etc. -> UI Elements
+                # If it's a generic group, we might want to recurse or just save it as a group?
+                # The v2 format seems to support flat lists. 
+                # If the element is a Group, we should probably save its children too?
+                # Current Element.to_dict (we assume) saves its properties. 
+                # But does it save children?
+                # If the editor supports groups in the YAML, we can just append it.
+                # If the editor expects flat lists (which the previous code implies by flattening named groups),
+                # then we should probably flatten generic groups too OR just append them if the loader handles them.
+                # Given 'ui_elements' is a list, let's append the element itself.
+                # If it's a group, the loader needs to handle it.
+                # However, looking at the previous specific handling of "UI Elements" group, 
+                # it suggests the YAML format expects a flat list of items, NOT a hierarchy.
+                # BUT, ThemeModel supports hierarchy.
+                # Let's assume for now we just save the root element. 
+                # If it is a group, its to_dict might need to include children IDs or data?
+                # Actually, standard V2 format usually flattens everything into ui_elements.
+                # Let's verify if GroupElement.to_dict includes children data.
+                # Since we can't see Element.to_dict, let's look at how we loaded.
+                # Loader: iterates lists, adds to parent.
+                # So if we save a Group object in the list, does it contain children?
+                # If not, we lose the children.
+                # Safe bet: Flatten everything into the list, UNLESS the format supports nesting.
+                # The previous code flattened "UI Elements" group.
+                # Let's recursively flatten groups for now to be safe and compatible with the apparent "flat list" expectation of the YAML structure shown in yaml_io.py.
+                
+                if element.element_type == ElementType.GROUP:
+                     _get_group_children_recursive(element, data["ui_elements"])
+                else:
+                     data["ui_elements"].append(element.to_dict())
         
-        return data
-    
+        return data    
     # --- Display Settings ---
     
     @property
