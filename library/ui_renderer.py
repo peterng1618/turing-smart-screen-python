@@ -864,7 +864,7 @@ class UiRenderer:
                 img, (x, y) = self.draw_icon_to_image(config_item, sampling=4)
                 self.apply_element_styling(overlay, img, x, y, config_item)
                 
-            elif elem_type == 'image':
+            elif elem_type in ('image', 'background_image'):
                  path = config_item.get('path')
                  if path:
                     full_path = os.path.join(self.theme_path, path)

@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QLabel, QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox,
     QComboBox, QPushButton, QColorDialog, QSlider, QScrollArea,
-    QFileDialog
+    QFileDialog, QMessageBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QUndoStack, QColor, QFont
@@ -25,7 +25,7 @@ from theme_editor.models.element import (
     Element, ElementType, Shadow, Outline,
     RectangleElement, CircleElement, TriangleElement, LineElement,
     TextElement, ImageElement, IconElement, GroupElement, DynamicTextElement,
-    BackgroundImageElement, BackgroundVideoElement
+    BackgroundImageElement, BackgroundVideoElement, ThemeInfoElement
 )
 
 logger = logging.getLogger(__name__)
@@ -207,6 +207,8 @@ class PropertiesPanel(QWidget):
             self._add_background_image_group(element)
         elif isinstance(element, BackgroundVideoElement):
             self._add_background_video_group(element)
+        elif isinstance(element, ThemeInfoElement):
+            self._add_theme_info_group(element)
         
         # Type-specific properties
         if isinstance(element, TextElement) or isinstance(element, DynamicTextElement):
@@ -798,6 +800,118 @@ class PropertiesPanel(QWidget):
             self._on_property_changed("path", file_path)
             if "bg_path" in self._widgets:
                 self._widgets["bg_path"].setText(file_path)
+
+    def _add_theme_info_group(self, element: 'ThemeInfoElement') -> None:
+        """
+        Add theme info properties group with buffered editing (Save/Cancel).
+        """
+        group = QGroupBox("Theme Settings")
+        form = QFormLayout(group)
+        
+        # We store widgets in a local dict to read values on Save
+        self._theme_widgets = {}
+        
+        # Author
+        author_edit = QLineEdit(element.author)
+        form.addRow("Author:", author_edit)
+        self._theme_widgets["author"] = author_edit
+        
+        # Display Size
+        size_combo = QComboBox()
+        size_combo.addItems(["2.1\"", "3.5\"", "5\"", "8.8\""])
+        size_combo.setCurrentText(element.display_size)
+        form.addRow("Display Size:", size_combo)
+        self._theme_widgets["display_size"] = size_combo
+        
+        # Orientation
+        orient_combo = QComboBox()
+        orient_combo.addItems(["landscape", "portrait"])
+        orient_combo.setCurrentText(element.display_orientation)
+        form.addRow("Orientation:", orient_combo)
+        self._theme_widgets["display_orientation"] = orient_combo
+        
+        # RGB LED
+        # Convert RGB tuple to RGBA for button (A=255)
+        r, g, b = element.display_rgb_led
+        rgb_btn = ColorButton((r, g, b, 255))
+        form.addRow("RGB LED:", rgb_btn)
+        self._theme_widgets["display_rgb_led"] = rgb_btn
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        
+        save_btn = QPushButton("Save Settings")
+        save_btn.setStyleSheet("background-color: #2e8b57; color: white; font-weight: bold;")
+        save_btn.clicked.connect(lambda: self._save_theme_info(element))
+        btn_layout.addWidget(save_btn)
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(lambda: self._revert_theme_info(element))
+        btn_layout.addWidget(cancel_btn)
+        
+        form.addRow(btn_layout)
+        
+        self._content_layout.addWidget(group)
+        
+        # Note: We don't add these to self._widgets to avoid auto-updates from model
+        # invalidating our buffered state while typing? 
+        # Actually standard behavior is: if model changes (undo), UI updates.
+        # But here we want a buffer. If undo happens, we should probably update the UI to match.
+        # So we should register them in self._widgets for _on_model_element_changed to find them,
+        # BUT we shouldn't connect their signals to _on_property_changed.
+        # However, _on_model_element_changed calls update_property which expects specific widget types/names.
+        # To avoid complexity, we'll skip registering in self._widgets for now, meaning Undo won't 
+        # update this specific panel while it's open, which is acceptable for a "Dialog-like" form.
+    
+    def _save_theme_info(self, element: 'ThemeInfoElement') -> None:
+        """Apply buffered theme info changes."""
+        # Read new values
+        new_author = self._theme_widgets["author"].text()
+        new_size = self._theme_widgets["display_size"].currentText()
+        new_orient = self._theme_widgets["display_orientation"].currentText()
+        
+        # Handle Color
+        c_btn = self._theme_widgets["display_rgb_led"]
+        new_rgb = (c_btn.color[0], c_btn.color[1], c_btn.color[2])
+        
+        # Check for critical changes
+        size_changed = new_size != element.display_size
+        orient_changed = new_orient != element.display_orientation
+        
+        if size_changed or orient_changed:
+            ret = QMessageBox.warning(
+                self,
+                "Layout Change",
+                "Changing display size or orientation may require adjusting element positions.\n\n"
+                "The canvas will be reloaded. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if ret != QMessageBox.StandardButton.Yes:
+                return
+        
+        # Apply changes (this will trigger model signals -> undo stack -> autosave etc)
+        # Using undo stack macro would be nice, but simple consecutive updates are fine
+        if new_author != element.author:
+            self._on_property_changed("author", new_author)
+        if new_rgb != element.display_rgb_led:
+            self._on_property_changed("display_rgb_led", new_rgb)
+            
+        # Do size/orient last as they might trigger layout refresh
+        if size_changed:
+            self._on_property_changed("display_size", new_size)
+        if orient_changed:
+            self._on_property_changed("display_orientation", new_orient)
+            
+        # Update name if changed via Identity group (which is live)
+        # That's handled separately by Identity group.
+    
+    def _revert_theme_info(self, element: 'ThemeInfoElement') -> None:
+        """Revert widgets to current element values."""
+        self._theme_widgets["author"].setText(element.author)
+        self._theme_widgets["display_size"].setCurrentText(element.display_size)
+        self._theme_widgets["display_orientation"].setCurrentText(element.display_orientation)
+        r, g, b = element.display_rgb_led
+        self._theme_widgets["display_rgb_led"].color = (r, g, b, 255)
     
     def _pick_background_video(self) -> None:
         """Open file dialog to select a background video."""

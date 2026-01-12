@@ -9,6 +9,7 @@ Handles reading and writing theme YAML files:
 Uses ruamel.yaml to preserve comments and formatting where possible.
 """
 
+import os
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -123,6 +124,14 @@ class ThemeYamlIO:
             "ui_elements": [],
             "dynamic_elements": [],
         }
+        
+        # Extract author
+        author = v1.get("author")
+        if not author:
+            # check INFO.AUTHOR
+            info = v1.get("INFO", {})
+            author = info.get("AUTHOR", "")
+        v2["author"] = author
         
         # Handle video background (v1)
         video_bg = v1.get("video_background", {})
@@ -335,7 +344,7 @@ class ThemeYamlIO:
                     }
                     elements.append(element)
     
-    def save(self, theme_name: str, data: Dict[str, Any]) -> None:
+    def save(self, theme_name: str, data: Dict[str, Any], source_theme_path: Optional[Path] = None) -> None:
         """
         Save theme data to theme-editor.yaml (editor format only).
         
@@ -345,12 +354,13 @@ class ThemeYamlIO:
         Args:
             theme_name: Name of theme folder
             data: Theme data dictionary
+            source_theme_path: Optional original path to resolve existing relative assets
         """
         theme_path = self.THEMES_DIR / theme_name
         theme_path.mkdir(parents=True, exist_ok=True)
         
-        # Copy external images to theme folder
-        self._copy_external_images(data, theme_path)
+        # Copy external assets to theme folder
+        self._copy_external_assets(data, theme_path, source_theme_path)
         
         editor_file = theme_path / "theme-editor.yaml"
         
@@ -367,7 +377,7 @@ class ThemeYamlIO:
                     allow_unicode=True
                 )
     
-    def save_all(self, theme_name: str, data: Dict[str, Any]) -> None:
+    def save_all(self, theme_name: str, data: Dict[str, Any], source_theme_path: Optional[Path] = None) -> None:
         """
         Save theme data to both editor format and engine format.
         
@@ -381,66 +391,118 @@ class ThemeYamlIO:
         Args:
             theme_name: Name of theme folder
             data: Theme data dictionary
+            source_theme_path: Optional original path to resolve existing relative assets
         """
-        self.save(theme_name, data)       # Save theme-editor.yaml
-        self.export_v1(theme_name, data)  # Export theme.yaml
+        self.save(theme_name, data, source_theme_path)  # Save theme-editor.yaml
+        self.export_v1(theme_name, data)                # Export theme.yaml
     
-    def _copy_external_images(self, data: Dict[str, Any], theme_path: Path) -> None:
+    def _copy_external_assets(self, data: Dict[str, Any], theme_path: Path, source_theme_path: Optional[Path] = None) -> None:
         """
-        Copy external images to theme folder and update paths.
+        Copy external assets (images, videos) to theme folder and update paths.
         
-        Checks ui_elements for image elements with paths outside the theme folder.
-        Copies them to theme/images/ and updates the path to be relative.
+        Assets are renamed to [name]_source.[ext] if localized.
         
         Args:
             data: Theme data dictionary (modified in place)
-            theme_path: Path to theme folder
+            theme_path: Path to theme folder (destination)
+            source_theme_path: Optional original path to resolve relative assets
         """
-        import shutil
+        # 1. Top-level assets (BACKGROUND)
+        static_imgs = data.get("static_images", {})
+        bg_info = static_imgs.get("BACKGROUND")
+        if bg_info:
+            path_str = bg_info.get("PATH", "")
+            if path_str:
+                src_path = self._resolve_source_path(path_str, theme_path, source_theme_path)
+                if src_path:
+                    localized_path = self._localize_asset(src_path, theme_path, theme_path) # backgrounds in root
+                    bg_info["PATH"] = localized_path
         
+        # 2. Top-level assets (Video Background)
+        video_bg = data.get("video_background")
+        if video_bg:
+            path_str = video_bg.get("SOURCE_PATH", "")
+            if path_str:
+                src_path = self._resolve_source_path(path_str, theme_path, source_theme_path)
+                if src_path:
+                    localized_path = self._localize_asset(src_path, theme_path, theme_path) # videos in root
+                    video_bg["SOURCE_PATH"] = localized_path
+
+        # 3. Elements (UI & Dynamic)
         images_dir = theme_path / "images"
-        
         for elements_key in ["ui_elements", "dynamic_elements"]:
             elements = data.get(elements_key, [])
             for elem in elements:
-                if elem.get("type") != "image":
+                etype = elem.get("type")
+                path_key = "path"
+                dest_dir = images_dir
+                
+                if etype == "background_image":
+                    # Skip as handled above, but technically might still be in list
+                    path_key = "path"
+                    dest_dir = theme_path
+                elif etype == "image":
+                    path_key = "path"
+                    dest_dir = images_dir
+                elif etype == "background_video":
+                    # Skip as handled above
+                    path_key = "source_path"
+                    dest_dir = theme_path
+                else:
                     continue
                 
-                path_str = elem.get("path", "")
+                path_str = elem.get(path_key, "")
                 if not path_str:
                     continue
                 
-                path = Path(path_str)
+                src_path = self._resolve_source_path(path_str, theme_path, source_theme_path)
+                if src_path:
+                    localized_path = self._localize_asset(src_path, theme_path, dest_dir)
+                    elem[path_key] = localized_path
+                else:
+                    logger.warning(f"Could not resolve asset path: {path_str}")
+
+    def _resolve_source_path(self, path_str: str, theme_path: Path, source_theme_path: Optional[Path]) -> Optional[Path]:
+        """Helper to resolve a source path from various locations."""
+        raw_path = Path(path_str)
+        if raw_path.is_absolute():
+            return raw_path if raw_path.exists() else None
+        
+        # Try current theme folder
+        if (theme_path / raw_path).exists():
+            return theme_path / raw_path
+            
+        # Try source theme folder (Save As)
+        if source_theme_path and (source_theme_path / raw_path).exists():
+            return source_theme_path / raw_path
+            
+        return None
+
+    def _localize_asset(self, src_path: Path, theme_path: Path, dest_dir: Path) -> str:
+        """Helper to copy and rename an asset to _source, returns local relative path."""
+        import shutil
+        try:
+            rel_in_dest = src_path.relative_to(theme_path)
+        except ValueError:
+            rel_in_dest = None
+            
+        stem = src_path.stem
+        suffix = src_path.suffix
+        
+        if not stem.endswith("_source") and not stem.endswith("_exported"):
+            new_filename = f"{stem}_source{suffix}"
+        else:
+            new_filename = src_path.name
+            
+        dest_path = dest_dir / new_filename
+        
+        if rel_in_dest is None or src_path.name != new_filename or src_path.parent != dest_dir:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            if not dest_path.exists() or dest_path.stat().st_mtime < src_path.stat().st_mtime:
+                logger.info(f"Localizing asset: {src_path} -> {dest_path}")
+                shutil.copy2(src_path, dest_path)
                 
-                # Check if it's an external path (absolute or outside theme folder)
-                is_external = path.is_absolute()
-                if not is_external:
-                    # Check if relative path exists within theme
-                    full_path = theme_path / path
-                    is_external = not full_path.exists()
-                
-                if is_external and path.exists():
-                    # Copy to theme/images/ folder
-                    images_dir.mkdir(exist_ok=True)
-                    
-                    dest_filename = path.name
-                    dest_path = images_dir / dest_filename
-                    
-                    # Handle duplicate filenames
-                    counter = 1
-                    while dest_path.exists() and dest_path.read_bytes() != path.read_bytes():
-                        stem = path.stem
-                        suffix = path.suffix
-                        dest_filename = f"{stem}_{counter}{suffix}"
-                        dest_path = images_dir / dest_filename
-                        counter += 1
-                    
-                    if not dest_path.exists():
-                        logger.info(f"Copying external image: {path} -> {dest_path}")
-                        shutil.copy2(path, dest_path)
-                    
-                    # Update the element path to relative
-                    elem["path"] = f"images/{dest_filename}"
+        return os.path.relpath(dest_path, theme_path).replace('\\', '/')
 
     
     def export_v1(self, theme_name: str, data: Dict[str, Any]) -> None:
@@ -472,72 +534,86 @@ class ThemeYamlIO:
     def _convert_v2_to_v1(self, v2: Dict[str, Any]) -> Dict[str, Any]:
         """
         Convert v2 (editor) theme data to v1 (display engine) format.
+        
+        Strict Order:
+        1. author
+        2. display
+        3. static_images (BACKGROUND first)
+        4. video_background
+        5. STATS
+        6. dynamic_text
+        
+        Note: All UI elements (shapes, text, baked images) are EXCLUDED.
         """
-        v1 = {
-            "display": v2.get("display", {}),
-            "static_images": {},
-            "static_text": {},
-            "STATS": {},
-            "dynamic_text": {},
-        }
+        # Use child classes of dict or just careful insertion order to preserve order for yaml.dump(sort_keys=False)
+        v1 = {}
         
-        # Split elements into categories
-        ui_elements = v2.get("ui_elements", [])
-        dynamic_elements = v2.get("dynamic_elements", [])
+        # 1. Author
+        v1["author"] = v2.get("author", "Unknown")
         
-        # Handle background elements and static images/text
-        for elem in ui_elements:
-            etype = elem.get("type")
-            name = elem.get("name", "Element")
+        # 2. Display
+        v1["display"] = v2.get("display", {})
+        
+        # 3. Static Images (BACKGROUND MUST BE FIRST)
+        v1["static_images"] = {}
+        
+        # Check v2 static_images for BACKGROUND
+        v2_static_imgs = v2.get("static_images", {})
+        bg_info = v2_static_imgs.get("BACKGROUND")
+        
+        if bg_info:
+            # Point to _exported.png
+            src_path = Path(bg_info.get("PATH", "background_source.png"))
+            # Rename stem from _source to _exported
+            stem = src_path.stem.replace("_source", "")
+            exported_name = f"{stem}_exported.png"
             
-            if etype == "background_video":
-                if elem.get("enabled", False):
-                    v1["video_background"] = {
-                        "ENABLE": True,
-                        "SOURCE_PATH": elem.get("source_path", ""),
-                        "x": elem.get("crop_x", 0),
-                        "y": elem.get("crop_y", 0),
-                        "width": elem.get("crop_width", 0),
-                        "height": elem.get("crop_height", 0),
-                        "START_OFFSET": elem.get("start_offset", "00:00"),
-                        "DURATION": elem.get("duration", ""),
-                        "LOOP_FADE_DURATION": elem.get("loop_fade_duration", 1.0),
-                        "LOCAL_PATH": "background.mp4",
-                        "REMOTE_PATH": "/mnt/SDCARD/video/background.mp4",
-                    }
-            elif etype == "background_image":
-                v1["static_images"]["BACKGROUND"] = {
-                    "PATH": "background.png", "X": 0, "Y": 0
-                }
-            elif etype == "image":
-                v1["static_images"][name] = {
-                    "PATH": elem.get("path", ""),
-                    "X": elem.get("x", 0), "Y": elem.get("y", 0),
-                    "WIDTH": elem.get("width", 100), "HEIGHT": elem.get("height", 100),
-                }
-            elif etype == "text":
-                v1["static_text"][name] = {
-                    "TEXT": elem.get("text", ""),
-                    "X": elem.get("x", 0), "Y": elem.get("y", 0),
-                    "FONT": elem.get("font", ""),
-                    "FONT_SIZE": elem.get("font_size", 16),
-                    "FONT_COLOR": elem.get("color", "255, 255, 255, 255").rsplit(",", 1)[0], # Remove alpha
-                    "ALIGN": elem.get("align", "left"),
-                    "ANCHOR": elem.get("anchor", "lt"),
-                }
+            # Standard dimensions from display settings
+            w, h = self._get_v1_display_dimensions(v1["display"])
+            
+            v1["static_images"]["BACKGROUND"] = {
+                "PATH": exported_name,
+                "X": 0,
+                "Y": 0,
+                "WIDTH": w,
+                "HEIGHT": h
+            }
+        
+        # 4. Video Background
+        v2_video_bg = v2.get("video_background")
+        if v2_video_bg:
+            v1["video_background"] = {
+                "ENABLE": v2_video_bg.get("ENABLE", True),
+                "SOURCE_PATH": v2_video_bg.get("SOURCE_PATH", ""),
+                "x": v2_video_bg.get("x", 0), # Editor uses lowercase x,y? Let's check model
+                "y": v2_video_bg.get("y", 0),
+                "width": v2_video_bg.get("width", 0),
+                "height": v2_video_bg.get("height", 0),
+                "START_OFFSET": v2_video_bg.get("START_OFFSET", "00:00"),
+                "DURATION": v2_video_bg.get("DURATION", ""),
+                "LOOP_FADE_DURATION": v2_video_bg.get("LOOP_FADE_DURATION", 1.0),
+            }
+            # Add _exported path
+            src_path = Path(v2_video_bg.get("SOURCE_PATH", "video_source.mp4"))
+            stem = src_path.stem.replace("_source", "")
+            exported_video = f"{stem}_exported.mp4"
+            v1["video_background"]["LOCAL_PATH"] = exported_video
+            v1["video_background"]["REMOTE_PATH"] = f"/mnt/SDCARD/video/{exported_video}"
 
-        # Handle dynamic elements (STATS and dynamic_text)
+        # 5. STATS & 6. dynamic_text
+        v1["STATS"] = {}
+        v1["dynamic_text"] = {}
+        
+        dynamic_elements = v2.get("dynamic_elements", [])
         for elem in dynamic_elements:
             etype = elem.get("type")
             name = elem.get("name", "Dynamic")
             
             if etype == "dynamic_text":
-                # Determine if it belongs to STATS or dynamic_text top-level
                 text = elem.get("text", "")
                 sensor_path = elem.get("sensor", "")
-                
-                # Check if it's a simple sensor path like "CPU.PERCENTAGE"
                 parts = sensor_path.split(".")
+                
                 if len(parts) >= 2 and text == f"{{{sensor_path}:u}}":
                     # Place into STATS
                     sensor_type = parts[0]
@@ -546,8 +622,6 @@ class ThemeYamlIO:
                     if sensor_type not in v1["STATS"]:
                         v1["STATS"][sensor_type] = {"INTERVAL": elem.get("interval", 1)}
                     
-                    # Create metric entry if not exists
-                    # We might need to split further if metric itself has dots
                     curr = v1["STATS"][sensor_type]
                     for p in parts[1:-1]:
                         if p not in curr: curr[p] = {}
@@ -557,7 +631,6 @@ class ThemeYamlIO:
                     if last_metric not in curr:
                         curr[last_metric] = {}
                     
-                    # Add TEXT section
                     text_cfg = {
                         "SHOW": True,
                         "X": elem.get("x", 0), "Y": elem.get("y", 0),
@@ -574,9 +647,8 @@ class ThemeYamlIO:
                     
                     curr[last_metric]["TEXT"] = text_cfg
                 else:
-                    # Place into dynamic_text section
-                    dt_cfg = {
-                        "SHOW": True,
+                    # Place into dynamic_text
+                    v1["dynamic_text"][name] = {
                         "TEXT": text,
                         "X": elem.get("x", 0), "Y": elem.get("y", 0),
                         "FONT": elem.get("font", ""),
@@ -584,22 +656,34 @@ class ThemeYamlIO:
                         "FONT_COLOR": elem.get("color", "255, 255, 255, 255").rsplit(",", 1)[0],
                         "ALIGN": elem.get("align", "left"),
                         "ANCHOR": elem.get("anchor", "lt"),
+                        "INTERVAL": elem.get("interval", 1),
                     }
                     if elem.get("force_static"):
-                        dt_cfg["WIDTH"] = elem.get("width")
-                        dt_cfg["HEIGHT"] = elem.get("height")
-                    
-                    v1["dynamic_text"][name] = dt_cfg
-                    if "INTERVAL" not in v1["dynamic_text"]:
-                         v1["dynamic_text"]["INTERVAL"] = elem.get("interval", 1)
+                        v1["dynamic_text"][name]["WIDTH"] = elem.get("width")
+                        v1["dynamic_text"][name]["HEIGHT"] = elem.get("height")
 
-        # Cleanup empty sections
+        # Clean up empty sections
         if not v1["static_images"]: del v1["static_images"]
-        if not v1["static_text"]: del v1["static_text"]
         if not v1["STATS"]: del v1["STATS"]
         if not v1["dynamic_text"]: del v1["dynamic_text"]
         
         return v1
+
+    def _get_v1_display_dimensions(self, display: Dict[str, Any]) -> tuple:
+        """Helper to get width, height from display settings."""
+        size = display.get("DISPLAY_SIZE", "5\"")
+        orientation = display.get("DISPLAY_ORIENTATION", "landscape")
+        
+        sizes = {
+            "2.1\"": (480, 480),
+            "3.5\"": (320, 480),
+            "5\"": (480, 800),
+            "8.8\"": (480, 1920),
+        }
+        w, h = sizes.get(size, (480, 800))
+        if orientation == "landscape":
+            return max(w, h), min(w, h)
+        return min(w, h), max(w, h)
     
     def get_theme_path(self, theme_name: str) -> Path:
         """Get the path to a theme folder."""

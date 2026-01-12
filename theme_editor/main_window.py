@@ -564,7 +564,8 @@ class MainWindow(QMainWindow):
         try:
             yaml_io = ThemeYamlIO()
             theme_data = self._theme_model.to_data()
-            yaml_io.save_all(self._theme_name, theme_data)
+            source_path = self._theme_model.theme_folder
+            yaml_io.save(self._theme_name, theme_data, source_theme_path=source_path)
             
             self._undo_stack.setClean()
             self._status_bar.showMessage(f"Saved: {self._theme_name}")
@@ -624,13 +625,23 @@ class MainWindow(QMainWindow):
             theme_data = self._theme_model.to_data()
             
             # Step 1: Render UI elements to overlay
-            # Exclude background video as it will be processed by video_processor
+            # Exclude background video and image as they are handled separately or as base
             self._status_bar.showMessage("Baking UI elements...")
-            overlay = self._render_ui_overlay(theme_data, exclude_types=["background_video"])
+            overlay = self._render_ui_overlay(theme_data, exclude_types=["background_video", "background_image"])
             
-            # Step 2: Handle video or image background
+            # Step 2: Save assets and editor format first
+            # This localizes external assets to [name]_source.[ext] and updates theme_data
+            self._status_bar.showMessage("Localizing assets...")
+            yaml_io = ThemeYamlIO()
+            original_source_path = self._theme_model.theme_folder
+            yaml_io.save(self._theme_name, theme_data, source_theme_path=original_source_path)
+            
+            # Step 3: Handle video or image background (now using local _source assets)
             video_bg = theme_data.get("video_background", {})
-            if video_bg.get("ENABLE", False) and video_bg.get("SOURCE_PATH"):
+            static_imgs = theme_data.get("static_images", {})
+            bg_info = static_imgs.get("BACKGROUND", {})
+            
+            if video_bg and video_bg.get("SOURCE_PATH"):
                 # Video background: process with overlay
                 self._status_bar.showMessage("Baking video background...")
                 self._bake_video_background(theme_path, theme_data, overlay)
@@ -639,9 +650,9 @@ class MainWindow(QMainWindow):
                 self._status_bar.showMessage("Baking image background...")
                 self._bake_image_background(theme_path, theme_data, overlay)
             
-            # Step 3: Save both formats
-            yaml_io = ThemeYamlIO()
-            yaml_io.save_all(self._theme_name, theme_data)
+            # Step 4: Export legacy theme.yaml (points to _exported assets and excludes UI elements)
+            self._status_bar.showMessage("Exporting legacy theme...")
+            yaml_io.export_v1(self._theme_name, theme_data)
             
             self._undo_stack.setClean()
             self._status_bar.showMessage(f"Baked and saved: {self._theme_name}")
@@ -699,26 +710,26 @@ class MainWindow(QMainWindow):
         from theme_editor.utils.video_processor import process_video
         
         video_bg = theme_data.get("video_background", {})
-        source_path = video_bg.get("SOURCE_PATH", "")
-        if not source_path:
+        if not video_bg:
             return
             
-        # Ensure source path is absolute for processor
-        if not os.path.isabs(source_path):
-            source_path = str(theme_path / source_path)
+        source_rel_path = video_bg.get("SOURCE_PATH", "")
+        if not source_rel_path:
+            return
             
-        # Determine output path
-        source_name = Path(source_path).stem
-        output_video = f"{source_name}_background.mp4"
+        source_path = theme_path / source_rel_path
+        
+        # Determine output path: [name]_exported.mp4
+        src_stem = Path(source_rel_path).stem.replace("_source", "")
+        output_video = f"{src_stem}_exported.mp4"
         output_path = str(theme_path / output_video)
         
         # Run processing
         logger.info(f"Starting video processing: {source_path} -> {output_path}")
-        success = process_video(str(theme_path), source_path, output_path)
+        success = process_video(str(theme_path), str(source_path), output_path)
         
         if success:
             logger.info("Video baking successful")
-            # Update local path in theme data if needed (though yaml_io handles it during save)
         else:
             logger.error("Video baking failed")
             raise RuntimeError("Video processing failed. Check logs for details.")
@@ -728,16 +739,44 @@ class MainWindow(QMainWindow):
         Composite UI overlay onto static background image.
         """
         from PIL import Image
-        bg_path = theme_path / "background.png"
         
-        # If the overlay already contains the background image (rendered by UiRenderer),
-        # we can just use it. But we might want a solid base if overlay has transparency.
-        background = Image.new("RGBA", overlay.size, (0, 0, 0, 255))
+        # Find background info in static_images
+        static_imgs = theme_data.get("static_images", {})
+        bg_info = static_imgs.get("BACKGROUND", {})
+        background = None
+        bg_target = theme_path / "background_exported.png"
+        
+        if bg_info:
+            # Assets are now localized to theme_path with _source suffix
+            relative_path = bg_info.get("PATH", "background_source.png")
+            full_bg_path = theme_path / relative_path
+            
+            # Determine output filename: [name]_exported.png
+            src_stem = Path(relative_path).stem.replace("_source", "")
+            bg_target = theme_path / f"{src_stem}_exported.png"
+            
+            if full_bg_path.exists():
+                try:
+                    background = Image.open(full_bg_path).convert("RGBA")
+                    # Ensure it matches display size (overlay size)
+                    if background.size != overlay.size:
+                        background = background.resize(overlay.size, Image.Resampling.LANCZOS)
+                    logger.info(f"Using base background: {full_bg_path}")
+                except Exception as e:
+                    logger.error(f"Failed to load background image {full_bg_path}: {e}")
+            else:
+                logger.warning(f"Background image not found at {full_bg_path}")
+
+        # Fallback to black if no background image found or failed to load
+        if background is None:
+            background = Image.new("RGBA", overlay.size, (0, 0, 0, 255))
+        
+        # Composite overlay onto background
         result = Image.alpha_composite(background, overlay)
         
         # Save as PNG
-        result.convert("RGB").save(bg_path, "PNG")
-        logger.info(f"Baked image background to {bg_path}")
+        result.convert("RGB").save(bg_target, "PNG")
+        logger.info(f"Baked image background to {bg_target}")
     
     # --- Element Creation ---
     

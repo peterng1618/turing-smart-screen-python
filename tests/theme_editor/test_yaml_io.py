@@ -212,12 +212,12 @@ class TestV2ToV1Conversion:
         
         v1 = io._convert_v2_to_v1(v2)
         
-        # Background path in v1 export is always "background.png" (the baked file)
+        # Background path in v1 export points to _exported.png
         assert "BACKGROUND" in v1["static_images"]
-        assert v1["static_images"]["BACKGROUND"]["PATH"] == "background.png"
+        assert v1["static_images"]["BACKGROUND"]["PATH"] == "custom_bg_exported.png"
     
-    def test_ui_elements_export(self):
-        """Test that ui_elements are exported correctly."""
+    def test_ui_elements_exclusion(self):
+        """Test that non-background ui_elements are EXCLUDED from v1 export."""
         io = ThemeYamlIO()
         v2 = {
             "ui_elements": [
@@ -228,8 +228,9 @@ class TestV2ToV1Conversion:
         
         v1 = io._convert_v2_to_v1(v2)
         
-        assert "LOGO" in v1["static_images"]
-        assert "TITLE" in v1["static_text"]
+        # Neither should be in v1 since they are baked
+        assert "static_images" not in v1
+        assert "static_text" not in v1
     
     def test_dynamic_text_exported(self):
         """Test that dynamic_text IS exported to theme.yaml (as STATS or dynamic_text)."""
@@ -305,3 +306,101 @@ class TestGetThemePath:
         
         assert path.name == "TestTheme"
         assert path.parent == io.THEMES_DIR
+
+class TestCopyExternalAssets:
+    """Tests for copying external assets."""
+    
+    def test_copy_external_backgrounds(self):
+        """Test that background_image and background_video assets are copied."""
+        io = ThemeYamlIO()
+        
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            dest_theme_path = Path(tmp_dir) / "NewTheme"
+            dest_theme_path.mkdir()
+            
+            source_theme_path = Path(tmp_dir) / "OldTheme"
+            source_theme_path.mkdir()
+            
+            # Create dummy source assets
+            old_bg = source_theme_path / "background.png"
+            old_bg.write_bytes(b"old background")
+            
+            old_ui_img = source_theme_path / "images" / "logo.png"
+            old_ui_img.parent.mkdir()
+            old_ui_img.write_bytes(b"old logo")
+            
+            # Absolute external asset
+            ext_img = Path(tmp_dir) / "external.png"
+            ext_img.write_bytes(b"external")
+            
+            data = {
+                "ui_elements": [
+                    {
+                        "type": "background_image",
+                        "path": "background.png"  # Relative to OldTheme
+                    },
+                    {
+                        "type": "image",
+                        "path": "images/logo.png" # Relative to OldTheme
+                    },
+                    {
+                        "type": "image",
+                        "path": str(ext_img)      # Absolute
+                    }
+                ]
+            }
+            
+            io._copy_external_assets(data, dest_theme_path, source_theme_path)
+            
+            # Verify background was copied to root and renamed to _source
+            assert (dest_theme_path / "background_source.png").exists()
+            assert (dest_theme_path / "background_source.png").read_bytes() == b"old background"
+            assert data["ui_elements"][0]["path"] == "background_source.png"
+            
+            # Verify logo was copied to images/ and renamed to _source
+            assert (dest_theme_path / "images" / "logo_source.png").exists()
+            assert (dest_theme_path / "images" / "logo_source.png").read_bytes() == b"old logo"
+            assert data["ui_elements"][1]["path"] == "images/logo_source.png"
+            
+            # Verify external image was copied to images/ and renamed to _source
+            assert (dest_theme_path / "images" / "external_source.png").exists()
+            assert data["ui_elements"][2]["path"] == "images/external_source.png"
+
+    def test_v1_export_order(self):
+        """Test that v1 export follows strict section ordering and excludes UI elements."""
+        io = ThemeYamlIO()
+        
+        v2_data = {
+            "author": "Peter",
+            "display": {"DISPLAY_SIZE": "5\""},
+            "ui_elements": [
+                {"type": "background_image", "path": "test_source.png"},
+                {"type": "image", "name": "BakeMe", "path": "images/bake_source.png"},
+                {"type": "text", "name": "StaticText", "text": "Hello"}
+            ],
+            "dynamic_elements": [
+                {
+                    "type": "dynamic_text",
+                    "name": "CPU_Temp",
+                    "sensor": "CPU.TEMPERATURE",
+                    "text": "{CPU.TEMPERATURE:u}"
+                }
+            ]
+        }
+        
+        v1 = io._convert_v2_to_v1(v2_data)
+        
+        # Verify order of keys
+        keys = list(v1.keys())
+        expected_order = ["author", "display", "static_images", "STATS"]
+        assert keys == expected_order
+        
+        # Verify BACKGROUND is first in static_images
+        static_keys = list(v1["static_images"].keys())
+        assert static_keys[0] == "BACKGROUND"
+        assert v1["static_images"]["BACKGROUND"]["PATH"] == "test_exported.png"
+        
+        # Verify exclusion of BakeMe and StaticText
+        assert "BakeMe" not in v1["static_images"]
+        assert "static_text" not in v1
+        assert len(v1["static_images"]) == 1

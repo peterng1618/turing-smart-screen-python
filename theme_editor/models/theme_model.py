@@ -25,7 +25,7 @@ from theme_editor.models.element import (
     Element, ElementType, create_element,
     RectangleElement, CircleElement, TriangleElement, LineElement,
     TextElement, ImageElement, IconElement, GroupElement, DynamicTextElement,
-    BackgroundImageElement, BackgroundVideoElement
+    BackgroundImageElement, BackgroundVideoElement, ThemeInfoElement
 )
 
 logger = logging.getLogger(__name__)
@@ -75,6 +75,10 @@ class ThemeModel(QAbstractItemModel):
         # Background
         self._background_type = "image"  # "image" or "video"
         self._background_path = "background.png"
+        self._background_x = 0
+        self._background_y = 0
+        self._background_width = 800
+        self._background_height = 480
         self._video_config: Dict[str, Any] = {}
         
         # Theme metadata
@@ -331,24 +335,44 @@ class ThemeModel(QAbstractItemModel):
         Returns:
             ID of added element
         """
+        # Calculate insert position and parent index for Qt signals
+        if parent_id:
+            parent = self._elements.get(parent_id)
+            if not parent:
+                # Fallback to root if parent invalid
+                parent_id = None
+                parent_model_index = QModelIndex()
+                current_list = self._root_ids
+            else:
+                parent_model_index = self._get_index_for_element(parent_id)
+                current_list = parent.children
+        else:
+            parent_model_index = QModelIndex()
+            current_list = self._root_ids
+            
+        insert_row = len(current_list) if index < 0 else index
+        
+        # Begin model update
+        self.beginInsertRows(parent_model_index, insert_row, insert_row)
+        
         self._elements[element.id] = element
         element.parent_id = parent_id
         
         if parent_id:
-            parent = self._elements.get(parent_id)
-            if parent:
-                if index < 0:
-                    parent.children.append(element.id)
-                else:
-                    parent.children.insert(index, element.id)
+            # We already resolved parent above
+            if index < 0:
+                parent.children.append(element.id)
+            else:
+                parent.children.insert(index, element.id)
         else:
             if index < 0:
                 self._root_ids.append(element.id)
             else:
                 self._root_ids.insert(index, element.id)
         
-        # Emit model signals
-        self.layoutChanged.emit()
+        self.endInsertRows()
+        
+        # Emit custom signal for other components
         self.element_added.emit(element.id)
         
         logger.debug(f"Added element: {element.name} ({element.id})")
@@ -374,25 +398,37 @@ class ThemeModel(QAbstractItemModel):
             logger.debug(f"Cannot remove protected element: {element.name}")
             return None
         
-        # Now remove from dict
-        element = self._elements.pop(element_id, None)
-        if not element:
-            return None
-        
-        # Remove from parent's children or root list
+        # Determine parent index and row for removal
         if element.parent_id:
-            parent = self._elements.get(element.parent_id)
-            if parent and element_id in parent.children:
-                parent.children.remove(element_id)
+            parent_elem = self._elements.get(element.parent_id)
+            if parent_elem and element_id in parent_elem.children:
+                row = parent_elem.children.index(element_id)
+                parent_index = self._get_index_for_element(element.parent_id)
+                
+                self.beginRemoveRows(parent_index, row, row)
+                parent_elem.children.remove(element_id)
+                self.endRemoveRows()
         else:
             if element_id in self._root_ids:
+                row = self._root_ids.index(element_id)
+                self.beginRemoveRows(QModelIndex(), row, row)
                 self._root_ids.remove(element_id)
+                self.endRemoveRows()
         
-        # Recursively remove children
-        for child_id in list(element.children):
-            self.remove_element(child_id)
+        # Remove from dict
+        self._elements.pop(element_id, None)
         
-        self.layoutChanged.emit()
+        # Helper to recursively remove children from dict
+        # (Model rows for children are implicitly removed when parent is removed,
+        # so we don't need beginRemoveRows for them, just dict cleanup)
+        def _cleanup_children(elem):
+            for child_id in list(elem.children):
+                child = self._elements.pop(child_id, None)
+                if child:
+                    _cleanup_children(child)
+        
+        _cleanup_children(element)
+        
         self.element_removed.emit(element_id)
         
         logger.debug(f"Removed element: {element.name} ({element_id})")
@@ -482,11 +518,24 @@ class ThemeModel(QAbstractItemModel):
         setattr(element, prop_name, value)
         self.element_changed.emit(element_id, prop_name, value)
         
-        # Update model index if name changed
         if prop_name == "name":
             index = self._get_index_for_element(element_id)
             if index.isValid():
                 self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
+        
+        # Sync ThemeInfo properties with model attributes
+        if isinstance(element, ThemeInfoElement):
+            if prop_name == "author":
+                self._author = value
+            elif prop_name == "display_size":
+                self._display_size = value
+                # Trigger layout update for canvas resize if needed
+                self.element_changed.emit(element_id, "display_size", value)
+            elif prop_name == "display_orientation":
+                self._display_orientation = value
+                self.element_changed.emit(element_id, "display_orientation", value)
+            elif prop_name == "display_rgb_led":
+                self._display_rgb_led = value
         
         return True
     
@@ -553,7 +602,22 @@ class ThemeModel(QAbstractItemModel):
         self._theme_name = name
         self._theme_path = Path(__file__).parent.parent.parent / "res" / "themes" / name
         
-        # Add background layers first (bottom of layer stack)
+        # 1. Add Theme Info (Bottom of Layer List = Index 0)
+        theme_info = create_element(ElementType.THEME_INFO, name="Theme Info")
+        # Set defaults
+        theme_info.author = f"@{self._author}" if self._author else "@your_github_name"
+        theme_info.display_size = "5\"" 
+        theme_info.display_orientation = "landscape"
+        theme_info.display_rgb_led = (50, 50, 50)
+        # Sync model fields
+        self._author = theme_info.author
+        self._display_size = theme_info.display_size
+        self._display_orientation = theme_info.display_orientation
+        self._display_rgb_led = theme_info.display_rgb_led
+        
+        self.add_element(theme_info)
+
+        # 2. Add Background layers (siblings of UI Elements now)
         bg_video = create_element(
             ElementType.BACKGROUND_VIDEO,
             name="Background Video"
@@ -566,14 +630,14 @@ class ThemeModel(QAbstractItemModel):
         )
         self.add_element(bg_image)
         
-        # Add UI Elements group
+        # 3. Add UI Elements group
         ui_group = create_element(
             ElementType.GROUP,
             name="UI Elements"
         )
         self.add_element(ui_group)
         
-        # Add Dynamic Elements group
+        # 4. Add Dynamic Elements group
         dynamic_group = create_element(
             ElementType.GROUP,
             name="Dynamic Elements"
@@ -598,6 +662,24 @@ class ThemeModel(QAbstractItemModel):
         elif not self._theme_path and self._theme_name:
             # Fallback path resolution
             self._theme_path = Path(__file__).parent.parent.parent / "res" / "themes" / self._theme_name
+        # Load author
+        self._author = data.get("author", "")
+        
+        # Load background info from static_images: BACKGROUND
+        static_imgs = data.get("static_images", {})
+        bg_info = static_imgs.get("BACKGROUND", {})
+        self._background_path = bg_info.get("PATH", "background.png")
+        self._background_x = bg_info.get("X", 0)
+        self._background_y = bg_info.get("Y", 0)
+        self._background_width = bg_info.get("WIDTH", 800)
+        self._background_height = bg_info.get("HEIGHT", 480)
+        
+        # Load video config if present
+        self._video_config = data.get("video_background", {})
+        if self._video_config:
+            self._background_type = "video"
+        else:
+            self._background_type = "image"
             
         # Load guides
         guides = data.get("editor_guides", {})
@@ -619,7 +701,31 @@ class ThemeModel(QAbstractItemModel):
         main_ui_elements = data.get("ui_elements", [])
         main_dynamic_elements = data.get("dynamic_elements", [])
         
-        # 1. Create top-level groups if not present in data
+        # 1. Add Theme Info Element (Always first)
+        theme_info = create_element(ElementType.THEME_INFO, name="Theme Info")
+        theme_info.author = self._author
+        theme_info.display_size = self._display_size
+        theme_info.display_orientation = self._display_orientation
+        theme_info.display_rgb_led = self._display_rgb_led
+        self.add_element(theme_info)
+        
+        # 2. Add Backgrounds as Roots
+        bg_video_elem = create_element(ElementType.BACKGROUND_VIDEO, name="Background Video") # Renamed for clarity vs Layer List
+        if self._video_config:
+            bg_video_elem.source_path = self._video_config.get("SOURCE_PATH", "")
+            # ... other video config mapping if needed
+            bg_video_elem.enabled = self._video_config.get("ENABLE", True)
+        else:
+            bg_video_elem.enabled = False
+        self.add_element(bg_video_elem) # Root
+        
+        bg_image_elem = create_element(ElementType.BACKGROUND_IMAGE, name="Background Image Layer")
+        bg_image_elem.path = self._background_path
+        # We don't have X, Y, WIDTH, HEIGHT on the element class yet, but it uses display size
+        self.add_element(bg_image_elem) # Root
+        
+        # 3. Add Groups
+        # Create top-level groups if not present in data
         ui_group = None
         dynamic_group = None
         
@@ -646,65 +752,25 @@ class ThemeModel(QAbstractItemModel):
             dynamic_group = create_element(ElementType.GROUP, name="Dynamic Elements")
             self.add_element(dynamic_group)
             
-        # 2. Ensure Background layers exist
-        # We look for them in the existing data or create defaults
-        bg_video_data = None
-        bg_image_data = None
-        
-        # Look for existing background elements in the ui_elements list
+        # Load other elements 
         for elem_data in main_ui_elements:
             etype = elem_data.get("type")
-            if etype == "background_video":
-                bg_video_data = elem_data
-            elif etype == "background_image":
-                bg_image_data = elem_data
+            if etype in ["background_image", "background_video", "group", "theme_info"]:
+                continue
+            element = self._parse_element(elem_data)
+            if element:
+                self.add_element(element, parent_id=ui_group.id)
         
-        # Create or update Background Video layer
-        if bg_video_data:
-            bg_video = self._parse_element(bg_video_data)
-        else:
-            # Fallback to legacy root keys (v1 format or older v2)
-            video_bg_legacy = data.get("video_background", {})
-            bg_video = create_element(
-                ElementType.BACKGROUND_VIDEO,
-                name="Background Video",
-                enabled=video_bg_legacy.get("ENABLE", False),
-                source_path=video_bg_legacy.get("SOURCE_PATH", ""),
-                rotation=video_bg_legacy.get("ROTATE", 0),
-                start_offset=video_bg_legacy.get("START_OFFSET", "00:00"),
-                duration=video_bg_legacy.get("DURATION", ""),
-                loop_fade_duration=float(video_bg_legacy.get("LOOP_FADE_DURATION", 0.0)),
-            )
-        self.add_element(bg_video, index=0)
-        
-        # Create or update Background Image layer
-        if bg_image_data:
-            bg_image = self._parse_element(bg_image_data)
-        else:
-            bg_legacy = data.get("background", {})
-            bg_image = create_element(
-                ElementType.BACKGROUND_IMAGE,
-                name="Background Image",
-                path=bg_legacy.get("path", "background.png"),
-            )
-        self.add_element(bg_image, index=1)
-        
-        # Store legacy background info for compatibility
-        if bg_image and hasattr(bg_image, 'path'):
-            self._background_path = bg_image.path
-        if bg_video and bg_video.enabled:
-            self._background_type = "video"
-        else:
-            self._background_type = "image"
+        # Background elements are already created and added above.
 
         # 3. Load remaining elements from data
         # Skipping the singletons we already handled
         handled_ids = set()
-        for obj in [bg_video, bg_image, ui_group, dynamic_group]:
+        for obj in [bg_video_elem, bg_image_elem, ui_group, dynamic_group, theme_info]:
             if obj and hasattr(obj, 'id'):
                 handled_ids.add(obj.id)
         
-        handled_types = {"background_video", "background_image"}
+        handled_types = {"background_video", "background_image", "theme_info"}
         
         for elem_data in main_ui_elements:
             eid = elem_data.get("id")
@@ -776,15 +842,57 @@ class ThemeModel(QAbstractItemModel):
         Returns:
             Theme data dictionary
         """
+        # Find Background Elements & Theme Info
+        bg_image_elem = None
+        bg_video_elem = None
+        theme_info_elem = None
+        
+        for elem in self._elements.values():
+            if elem.element_type == ElementType.BACKGROUND_IMAGE:
+                bg_image_elem = elem
+            elif elem.element_type == ElementType.BACKGROUND_VIDEO:
+                bg_video_elem = elem
+            elif elem.element_type == ElementType.THEME_INFO:
+                theme_info_elem = elem
+        
+        # Defaults
+        bg_path = self._background_path
+        bg_x = self._background_x
+        bg_y = self._background_y
+        bg_w = self._background_width
+        bg_h = self._background_height
+        
+        # Sync from Theme Info if present
+        if theme_info_elem:
+            self._author = theme_info_elem.author
+            self._display_size = theme_info_elem.display_size
+            self._display_orientation = theme_info_elem.display_orientation
+            self._display_rgb_led = theme_info_elem.display_rgb_led
+        
+        if bg_image_elem:
+            bg_path = getattr(bg_image_elem, "path", bg_path)
+            # Use element props if available
+            bg_x = getattr(bg_image_elem, "x", bg_x)
+            bg_y = getattr(bg_image_elem, "y", bg_y)
+            # Use display dimensions as default/authoritative for background
+            bg_w = self.display_width
+            bg_h = self.display_height
+        
         data = {
+            "author": self._author,
             "display": {
                 "DISPLAY_SIZE": self._display_size,
                 "DISPLAY_ORIENTATION": self._display_orientation,
                 "DISPLAY_RGB_LED": f"{self._display_rgb_led[0]}, {self._display_rgb_led[1]}, {self._display_rgb_led[2]}",
             },
-            "background": {
-                "type": self._background_type,
-                "path": self._background_path,
+            "static_images": {
+                "BACKGROUND": {
+                    "PATH": bg_path,
+                    "X": bg_x,
+                    "Y": bg_y,
+                    "WIDTH": bg_w,
+                    "HEIGHT": bg_h,
+                }
             },
             "ui_elements": [],
             "dynamic_elements": [],
@@ -794,8 +902,15 @@ class ThemeModel(QAbstractItemModel):
             },
         }
         
-        if self._background_type == "video":
-            data["background"]["video"] = self._video_config
+        if bg_video_elem and getattr(bg_video_elem, "enabled", False):
+            # Construct video_config from element
+            data["video_background"] = {
+                "ENABLE": True,
+                "SOURCE_PATH": getattr(bg_video_elem, "source_path", ""),
+                # ... other properties mapping
+            }
+        elif self._background_type == "video":
+             data["video_background"] = self._video_config
         
         # Find UI Elements and Dynamic Elements groups
         for elem_id in self._root_ids:
@@ -806,7 +921,7 @@ class ThemeModel(QAbstractItemModel):
             if element.name == "UI Elements":
                 for child_id in element.children:
                     child = self._elements.get(child_id)
-                    if child:
+                    if child and child.element_type not in [ElementType.BACKGROUND_IMAGE, ElementType.BACKGROUND_VIDEO]:
                         data["ui_elements"].append(child.to_dict())
             elif element.name == "Dynamic Elements":
                 for child_id in element.children:
@@ -846,6 +961,16 @@ class ThemeModel(QAbstractItemModel):
     def theme_folder(self) -> Optional[Path]:
         """Get the current theme directory."""
         return self._theme_path
+
+    @property
+    def author(self) -> str:
+        """Get the theme author."""
+        return self._author
+    
+    @author.setter
+    def author(self, value: str):
+        """Set the theme author."""
+        self._author = value
 
     # --- Guides ---
     

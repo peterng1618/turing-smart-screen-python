@@ -19,6 +19,23 @@ display:
   # Backplate RGB LED color (for HW revision 'flagship' devices only), set one that match your theme dominant color
   DISPLAY_RGB_LED: 255, 0, 0
 
+static_images:
+  # Specify what static images we want to show on the display
+  # You can create additional records here, the name of the entry must be unique and contain at a minimum the PATH.
+  # Images are drawn in the order they are listed below, the top image will be drawn first (so places images back to front)
+  # IMAGE_NAME:
+  #   PATH:
+  #   X:
+  #   Y:
+  #   WIDTH:
+  #   HEIGHT:
+  BACKGROUND:
+    PATH: background.png
+    X: 0
+    Y: 0
+    WIDTH: 320
+    HEIGHT: 480
+
 video_background:
   # VIDEO BACKGROUNDS (Revision C / 5" displays only)
   # Video backgrounds are FULLSCREEN and fill the entire display - no X/Y positioning needed.
@@ -64,23 +81,6 @@ video_background:
   # Trim video - duration from start point (mm:ss format)
   # If not specified, uses source video's remaining duration after START_OFFSET.
   DURATION: 01:30
-
-static_images:
-  # Specify what static images we want to show on the display
-  # You can create additional records here, the name of the entry must be unique and contain at a minimum the PATH.
-  # Images are drawn in the order they are listed below, the top image will be drawn first (so places images back to front)
-  # IMAGE_NAME:
-  #   PATH:
-  #   X:
-  #   Y:
-  #   WIDTH:
-  #   HEIGHT:
-  BACKGROUND:
-    PATH: background.png
-    X: 0
-    Y: 0
-    WIDTH: 320
-    HEIGHT: 480
 
 static_text:
   # Specify what static text we want to show on the display

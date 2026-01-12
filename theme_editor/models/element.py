@@ -18,13 +18,18 @@ class ElementType(Enum):
     # Container types
     GROUP = auto()
     BACKGROUND_IMAGE = auto()
+
     BACKGROUND_VIDEO = auto()
+    
+    # Metadata
+    THEME_INFO = auto()
     
     # Shape types
     RECTANGLE = auto()
     CIRCLE = auto()
     ELLIPSE = auto()
     TRIANGLE = auto()
+
     LINE = auto()
     
     # Content types
@@ -514,6 +519,42 @@ class BackgroundVideoElement(Element):
         return data
 
 
+@dataclass
+class ThemeInfoElement(Element):
+    """
+    Theme metadata element (Root node).
+     Stores high-level theme settings like author, display size, etc.
+    """
+    element_type: ElementType = field(default=ElementType.THEME_INFO, init=False)
+    
+    # Metadata fields
+    author: str = ""
+    display_size: str = "3.5\""
+    display_orientation: str = "landscape"
+    display_rgb_led: Tuple[int, int, int] = (255, 0, 0)
+    
+    def __post_init__(self):
+        # Always locked and visible (users can't hide theme info)
+        self.locked = True
+        self.visible = True
+        if not self.name:
+            self.name = "Theme Info"
+
+    def to_dict(self) -> Dict[str, Any]:
+        # ThemeInfo is special, it's not saved to ui_elements list directly
+        # Its data is saved to root keys in YAML.
+        # But we still implement to_dict for consistency/debugging
+        data = super().to_dict()
+        data.update({
+            "type": "theme_info",
+            "author": self.author,
+            "display_size": self.display_size,
+            "display_orientation": self.display_orientation,
+            "display_rgb_led": f"{self.display_rgb_led[0]}, {self.display_rgb_led[1]}, {self.display_rgb_led[2]}"
+        })
+        return data
+
+
 # Factory function to create elements from type
 ELEMENT_CLASSES = {
     ElementType.RECTANGLE: RectangleElement,
@@ -530,6 +571,7 @@ ELEMENT_CLASSES = {
     ElementType.LINE_GRAPH: LineGraphElement,
     ElementType.BACKGROUND_IMAGE: BackgroundImageElement,
     ElementType.BACKGROUND_VIDEO: BackgroundVideoElement,
+    ElementType.THEME_INFO: ThemeInfoElement,
 }
 
 

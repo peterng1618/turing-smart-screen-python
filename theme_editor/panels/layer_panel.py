@@ -28,20 +28,7 @@ from theme_editor.models.element import (
 logger = logging.getLogger(__name__)
 
 
-class ReverseLayerProxyModel(QSortFilterProxyModel):
-    """
-    Proxy model that reverses the order of items (bottom-to-top).
-    Uses sorting to achieve this without complex index mapping.
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setDynamicSortFilter(True)
-        
-    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
-        # Sort by row index: lower row index (top in source) < higher row index
-        # But we will use DescendingOrder in the view to flip it.
-        # So standard comparison here is fine.
-        return left.row() < right.row()
+
 
 
 class LayerItemDelegate(QStyledItemDelegate):
@@ -121,14 +108,8 @@ class LayerPanel(QWidget):
         # Tree view for layers
         self._tree_view = QTreeView()
         
-        # Use reversed proxy model
-        self._proxy_model = ReverseLayerProxyModel()
-        self._proxy_model.setSourceModel(self._model)
-        self._tree_view.setModel(self._proxy_model)
-        # Sort descending to show last items (backgrounds) at bottom if they have high index? 
-        # Wait, index 0 is at top. We want index 0 (Background) at BOTTOM.
-        # So we want Descending order: N...0.
-        self._proxy_model.sort(0, Qt.SortOrder.DescendingOrder)
+        # Use model directly (default top-to-bottom order)
+        self._tree_view.setModel(self._model)
         
         self._tree_view.setHeaderHidden(True)
         self._tree_view.setDragEnabled(True)
@@ -153,11 +134,7 @@ class LayerPanel(QWidget):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(4)
         
-        self._btn_add = QPushButton("+")
-        self._btn_add.setToolTip("Add new element")
-        self._btn_add.setMaximumWidth(30)
-        self._btn_add.clicked.connect(self._on_add_clicked)
-        btn_layout.addWidget(self._btn_add)
+
         
         self._btn_delete = QPushButton("−")
         self._btn_delete.setToolTip("Delete selected (Del)")
@@ -219,9 +196,7 @@ class LayerPanel(QWidget):
                 if element:
                     source_index = self._model._get_index_for_element(elem_id)
                     if source_index.isValid():
-                        proxy_index = self._proxy_model.mapFromSource(source_index)
-                        if proxy_index.isValid():
-                            new_selection.select(proxy_index, proxy_index)
+                        new_selection.select(source_index, source_index)
             
             # Apply atomic update
             selection_model.select(
@@ -296,10 +271,7 @@ class LayerPanel(QWidget):
             if element and element.element_type == ElementType.GROUP:
                 action_ungroup = menu.addAction("Ungroup (Ctrl+Shift+G)")
                 action_ungroup.triggered.connect(self._on_ungroup_clicked)
-        else:
-            # No item selected - show add options
-            action_add = menu.addAction("Add Element...")
-            action_add.triggered.connect(self._on_add_clicked)
+            pass
         
         menu.exec(self._tree_view.mapToGlobal(pos))
     
@@ -315,59 +287,7 @@ class LayerPanel(QWidget):
         if element:
             self._model.set_element_property(element_id, "locked", not element.locked)
     
-    def _on_add_clicked(self) -> None:
-        """Handle add button click - show element type menu."""
-        menu = QMenu(self)
-        
-        # Shape types
-        shapes_menu = menu.addMenu("Shapes")
-        for elem_type in [ElementType.RECTANGLE, ElementType.CIRCLE, ElementType.TRIANGLE, ElementType.LINE]:
-            action = shapes_menu.addAction(elem_type.name.title())
-            action.triggered.connect(lambda checked, t=elem_type: self._add_element(t))
-        
-        # Text
-        action_text = menu.addAction("Text")
-        action_text.triggered.connect(lambda: self._add_element(ElementType.TEXT))
-        
-        # Image
-        action_image = menu.addAction("Image...")
-        action_image.triggered.connect(lambda: self._add_element(ElementType.IMAGE))
-        
-        # Icon
-        action_icon = menu.addAction("Icon...")
-        action_icon.triggered.connect(lambda: self._add_element(ElementType.ICON))
-        
-        menu.addSeparator()
-        
-        # Group
-        action_group = menu.addAction("New Group")
-        action_group.triggered.connect(lambda: self._add_element(ElementType.GROUP))
-        
-        # Dynamic elements
-        dynamic_menu = menu.addMenu("Dynamic")
-        action_dynamic_text = dynamic_menu.addAction("Dynamic Text")
-        action_dynamic_text.triggered.connect(lambda: self._add_element(ElementType.DYNAMIC_TEXT))
-        
-        menu.exec(self._btn_add.mapToGlobal(self._btn_add.rect().bottomLeft()))
-    
-    def _add_element(self, element_type: ElementType) -> None:
-        """Add a new element of the specified type."""
-        # Find UI Elements group to add to
-        parent_id = None
-        for root_elem in self._model.get_root_elements():
-            if root_elem.name == "UI Elements":
-                parent_id = root_elem.id
-                break
-        
-        element = create_element(element_type)
-        self._model.add_element(element, parent_id=parent_id)
-        
-        # Select the new element
-        index = self._model._get_index_for_element(element.id)
-        if index.isValid():
-            self._tree_view.setCurrentIndex(index)
-        
-        logger.info(f"Added {element_type.name}: {element.name}")
+
     
     def _on_delete_clicked(self) -> None:
         """Delete selected elements (skips protected background elements)."""
