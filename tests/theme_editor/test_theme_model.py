@@ -270,13 +270,14 @@ class TestThemeOperations:
         """Test creating new theme with default structure."""
         model.create_new("test_theme")
         
-        # Should have 3 root groups: Background, UI Elements, Dynamic Elements
-        assert model.rowCount() == 3
+        # Should have 4 root groups: Background Video, Background Image, UI Elements, Dynamic Elements
+        assert model.rowCount() == 4
         
         roots = model.get_root_elements()
         names = [elem.name for elem in roots]
         
-        assert "Background" in names
+        assert "Background Video" in names
+        assert "Background Image" in names
         assert "UI Elements" in names
         assert "Dynamic Elements" in names
     

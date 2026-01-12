@@ -156,7 +156,7 @@ class PropertiesPanel(QWidget):
         # Placeholder label
         self._placeholder = QLabel("Select an element to edit properties")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._placeholder.setStyleSheet("color: #888;")
+        self._placeholder.setStyleSheet("color: #aaa;")
         self._content_layout.addWidget(self._placeholder)
         
         scroll.setWidget(self._content)
@@ -239,7 +239,7 @@ class PropertiesPanel(QWidget):
         
         # Type (read-only)
         type_label = QLabel(element.element_type.name.title())
-        type_label.setStyleSheet("color: #888;")
+        type_label.setStyleSheet("color: #aaa;")
         form.addRow("Type:", type_label)
         
         self._content_layout.addWidget(group)
@@ -550,7 +550,7 @@ class PropertiesPanel(QWidget):
         # Font
         font_layout = QHBoxLayout()
         font_label = QLabel(element.font if hasattr(element, 'font') else "")
-        font_label.setStyleSheet("color: #888; font-size: 10px;")
+        font_label.setStyleSheet("color: #aaa; font-size: 10px;")
         font_label.setMaximumWidth(180)
         full_font_path = element.font if hasattr(element, 'font') else ""
         font_label.setToolTip(f"<span style='color: white; background: #333; padding: 4px;'>{full_font_path}</span>")
@@ -612,8 +612,7 @@ class PropertiesPanel(QWidget):
         
         # Current path
         path_layout = QHBoxLayout()
-        path_label = QLabel(element.path if element.path else "(no image)")
-        path_label.setStyleSheet("color: #888; font-size: 10px;")
+        path_label.setStyleSheet("color: #aaa; font-size: 10px;")
         path_label.setWordWrap(True)
         path_label.setToolTip(element.path)
         path_layout.addWidget(path_label, 1)
@@ -683,7 +682,7 @@ class PropertiesPanel(QWidget):
         
         # URL input
         url_label = QLabel("FontAwesome URL:")
-        url_label.setStyleSheet("color: #888; font-size: 10px;")
+        url_label.setStyleSheet("color: #aaa; font-size: 10px;")
         layout.addWidget(url_label)
         
         url_edit = QLineEdit(element.icon if element.icon else "")
@@ -695,8 +694,7 @@ class PropertiesPanel(QWidget):
         self._widgets["icon"] = url_edit
         
         # Help text
-        help_label = QLabel("Paste a FontAwesome icon URL to display the icon")
-        help_label.setStyleSheet("color: #666; font-size: 9px;")
+        help_label.setStyleSheet("color: #999; font-size: 9px;")
         help_label.setWordWrap(True)
         layout.addWidget(help_label)
         

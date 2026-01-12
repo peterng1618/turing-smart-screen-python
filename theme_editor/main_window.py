@@ -391,6 +391,7 @@ class MainWindow(QMainWindow):
         
         # Connect signals
         self._tool_panel.add_element_requested.connect(self._on_tool_requested)
+        self._tool_panel.theme_toggle_requested.connect(self._toggle_app_theme)
         self._canvas.selection_changed.connect(self._on_canvas_selection_changed)
         self._canvas.mouse_moved.connect(self._on_canvas_mouse_moved)
         self._layer_panel.selection_changed.connect(self._on_layer_selection_changed)
@@ -740,6 +741,25 @@ class MainWindow(QMainWindow):
     
     # --- Element Creation ---
     
+    def _toggle_app_theme(self) -> None:
+        """Toggle between dark and light themes."""
+        settings = QSettings("TuringSmartScreen", "ThemeEditorV2")
+        current = settings.value("appTheme", "dark")
+        new_theme = "light" if current == "dark" else "dark"
+        
+        settings.setValue("appTheme", new_theme)
+        
+        # Import dynamically to avoid circular issues
+        from theme_editor_v2 import set_app_theme
+        set_app_theme(QApplication.instance(), new_theme)
+        
+        # Refresh some UI elements that might have custom styling
+        # Re-applying the stylesheet forces PyQt to re-evaluate palette() calls
+        for widget in [self, self._tool_panel, self._properties_panel, self._layer_panel]:
+            widget.setStyleSheet(widget.styleSheet())
+            
+        self._status_bar.showMessage(f"Theme switched to {new_theme}")
+        
     def _on_tool_requested(self, tool_data) -> None:
         """Handle tool panel request."""
         if isinstance(tool_data, ElementType):
@@ -751,7 +771,6 @@ class MainWindow(QMainWindow):
         """Add a new element of the given type at the center of the view."""
         
         # Get center of view in scene coordinates
-
         center = self._canvas.get_scene_center()
         
         # Special handling for IMAGE: show file picker
