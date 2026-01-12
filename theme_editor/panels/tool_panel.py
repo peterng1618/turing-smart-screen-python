@@ -33,17 +33,20 @@ class ToolPanel(QWidget):
         self.setStyleSheet("""
             QToolButton {
                 text-align: left;
-                padding: 2px 4px;
-                height: 26px;
+                padding: 4px 8px;
+                height: 30px;
+                background: palette(window);
                 border: 1px solid palette(mid);
                 border-radius: 4px;
-                background: transparent;
                 color: palette(window-text);
             }
             QToolButton:hover {
                 background: palette(highlight);
                 color: palette(highlighted-text);
                 border: 1px solid palette(highlight);
+            }
+            QToolButton:pressed {
+                background: palette(midlight);
             }
             QToolButton::menu-indicator {
                 subcontrol-origin: padding;
@@ -55,14 +58,14 @@ class ToolPanel(QWidget):
                 font-weight: bold;
                 border: 1px solid palette(mid);
                 border-radius: 6px;
-                margin-top: 10px;
-                padding-top: 10px;
+                margin-top: 15px;
+                padding-top: 15px;
                 color: palette(window-text);
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 left: 10px;
-                padding: 0 3px;
+                padding: 0 5px;
                 color: palette(window-text);
             }
         """)
