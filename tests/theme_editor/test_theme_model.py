@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 from PyQt6.QtGui import QUndoStack
 from PyQt6.QtCore import Qt
 
+from theme_editor.models.editor_state import EditorState
 from theme_editor.models.theme_model import ThemeModel
 from theme_editor.models.element import (
     ElementType, create_element
@@ -22,9 +23,16 @@ def undo_stack():
 
 
 @pytest.fixture
-def model(undo_stack):
+def editor_state(undo_stack):
+    """Create a real editor state."""
+    # We use a real EditorState because it's tightly coupled with ThemeModel
+    return EditorState(undo_stack)
+
+
+@pytest.fixture
+def model(editor_state):
     """Create a fresh theme model."""
-    return ThemeModel(undo_stack)
+    return ThemeModel(editor_state)
 
 
 class TestThemeModelBasics:
@@ -36,18 +44,18 @@ class TestThemeModelBasics:
         assert model.display_width > 0
         assert model.display_height > 0
     
-    def test_display_dimensions_landscape(self, undo_stack):
+    def test_display_dimensions_landscape(self, editor_state):
         """Test display dimensions for landscape orientation."""
-        model = ThemeModel(undo_stack)
+        model = ThemeModel(editor_state)
         model._display_size = '5"'
         model._display_orientation = "landscape"
         
         assert model.display_width == 800
         assert model.display_height == 480
     
-    def test_display_dimensions_portrait(self, undo_stack):
+    def test_display_dimensions_portrait(self, editor_state):
         """Test display dimensions for portrait orientation."""
-        model = ThemeModel(undo_stack)
+        model = ThemeModel(editor_state)
         model._display_size = '5"'
         model._display_orientation = "portrait"
         

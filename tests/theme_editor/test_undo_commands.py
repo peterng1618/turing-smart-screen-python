@@ -7,6 +7,7 @@ import pytest
 
 from PyQt6.QtGui import QUndoStack
 
+from theme_editor.models.editor_state import EditorState
 from theme_editor.models.theme_model import ThemeModel
 from theme_editor.models.element import ElementType, create_element
 from theme_editor.commands.undo_commands import (
@@ -27,9 +28,15 @@ def undo_stack():
 
 
 @pytest.fixture
-def model(undo_stack):
+def editor_state(undo_stack):
+    """Create a real editor state."""
+    return EditorState(undo_stack)
+
+
+@pytest.fixture
+def model(editor_state):
     """Create a fresh theme model."""
-    return ThemeModel(undo_stack)
+    return ThemeModel(editor_state)
 
 
 class TestMoveElementCommand:

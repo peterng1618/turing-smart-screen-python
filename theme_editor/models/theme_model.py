@@ -21,6 +21,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QUndoStack
 
+from theme_editor.models.editor_state import EditorState
 from theme_editor.models.element import (
     Element, ElementType, create_element,
     TriangleElement, BackgroundImageElement, BackgroundVideoElement, ThemeInfoElement
@@ -31,18 +32,18 @@ logger = logging.getLogger(__name__)
 
 class ThemeModel(QAbstractItemModel):
     """
-    Central data model for theme data.
+    View Projection for theme data.
     
-    Implements QAbstractItemModel for use with QTreeView (layer panel).
-    Emits signals when data changes for canvas/property panel updates.
+    Acts as a bridge between the central EditorState and QTreeView.
+    No longer 'owns' the data; it projects the state held in EditorState.
     """
     
-    # Signals
-    element_added = pyqtSignal(str)  # element_id
-    element_removed = pyqtSignal(str)  # element_id
-    element_changed = pyqtSignal(str, str, object)  # element_id, property_name, new_value
-    element_moved = pyqtSignal(str, int, int)  # element_id, new_x, new_y
-    selection_changed = pyqtSignal(list)  # list of element_ids
+    # Signals (proxied from EditorState for backward compatibility)
+    element_added = pyqtSignal(str)
+    element_removed = pyqtSignal(str)
+    element_changed = pyqtSignal(str, str, object)
+    element_moved = pyqtSignal(str, int, int)
+    selection_changed = pyqtSignal(list)
     guides_changed = pyqtSignal()
     
     # Custom role for element ID
@@ -51,43 +52,163 @@ class ThemeModel(QAbstractItemModel):
     VisibleRole = Qt.ItemDataRole.UserRole + 3
     LockedRole = Qt.ItemDataRole.UserRole + 4
     
-    def __init__(self, undo_stack: QUndoStack, parent=None):
+    def __init__(self, editor_state: EditorState, parent=None):
         """
-        Initialize the theme model.
+        Initialize the theme model projection.
         
         Args:
-            undo_stack: Undo stack for command tracking
+            editor_state: Central state store
             parent: Parent QObject
         """
         super().__init__(parent)
         
-        self._undo_stack = undo_stack
-        self._elements: Dict[str, Element] = {}
-        self._root_ids: List[str] = []  # Top-level element IDs in order
+        self._editor_state = editor_state
+        self._undo_stack = editor_state.undo_stack
         
-        # Display settings
-        self._display_size = "5\""
-        self._display_orientation = "landscape"
-        self._display_rgb_led = (255, 255, 255)
-        
-        # Background
-        self._background_type = "image"  # "image" or "video"
-        self._background_path = "background.png"
-        self._background_x = 0
-        self._background_y = 0
-        self._background_width = 800
-        self._background_height = 480
-        self._video_config: Dict[str, Any] = {}
-        
-        # Theme metadata
-        self._theme_name = ""
-        self._theme_path: Optional[Path] = None
-        self._author = ""
-        
-        # Guides (for editor only)
-        self._guides_h: List[int] = []
-        self._guides_v: List[int] = []
+        # Connect signals from store to local proxied signals
+        self._editor_state.element_added.connect(self.element_added.emit)
+        self._editor_state.element_removed.connect(self.element_removed.emit)
+        self._editor_state.element_changed.connect(self.element_changed.emit)
+        self._editor_state.element_moved.connect(self.element_moved.emit)
+        self._editor_state.selection_changed.connect(self.selection_changed.emit)
+        self._editor_state.guides_changed.connect(self.guides_changed.emit)
+
+    @property
+    def editor_state(self) -> EditorState:
+        return self._editor_state
+
+    @property
+    def _elements(self) -> Dict[str, Element]:
+        return self._editor_state._elements
+
+    @property
+    def _root_ids(self) -> List[str]:
+        return self._editor_state._root_ids
+
+    # Document properties proxied to EditorState
+    @property
+    def display_size(self) -> str: return self._editor_state.display_size
+    @display_size.setter
+    def display_size(self, v: str): self._editor_state.display_size = v
+    @property
+    def _display_size(self) -> str: return self.display_size
+    @_display_size.setter
+    def _display_size(self, v: str): self.display_size = v
+
+    @property
+    def display_orientation(self) -> str: return self._editor_state.display_orientation
+    @display_orientation.setter
+    def display_orientation(self, v: str): self._editor_state.display_orientation = v
+    @property
+    def _display_orientation(self) -> str: return self.display_orientation
+    @_display_orientation.setter
+    def _display_orientation(self, v: str): self.display_orientation = v
+
+    @property
+    def display_width(self) -> int: return self._editor_state.display_width
+    @property
+    def display_height(self) -> int: return self._editor_state.display_height
+
+    @property
+    def display_rgb_led(self) -> tuple: return self._editor_state.display_rgb_led
+    @display_rgb_led.setter
+    def display_rgb_led(self, v: tuple): self._editor_state.display_rgb_led = v
+    @property
+    def _display_rgb_led(self) -> tuple: return self.display_rgb_led
+    @_display_rgb_led.setter
+    def _display_rgb_led(self, v: tuple): self.display_rgb_led = v
+
+    @property
+    def background_type(self) -> str: return self._editor_state.background_type
+    @background_type.setter
+    def background_type(self, v: str): self._editor_state.background_type = v
+    @property
+    def _background_type(self) -> str: return self.background_type
+    @_background_type.setter
+    def _background_type(self, v: str): self.background_type = v
+
+    @property
+    def background_path(self) -> str: return self._editor_state.background_path
+    @background_path.setter
+    def background_path(self, v: str): self._editor_state.background_path = v
+    @property
+    def _background_path(self) -> str: return self.background_path
+    @_background_path.setter
+    def _background_path(self, v: str): self.background_path = v
+
+    @property
+    def _background_x(self) -> int: return self._editor_state.background_x
+    @_background_x.setter
+    def _background_x(self, v: int): self._editor_state.background_x = v
+
+    @property
+    def _background_y(self) -> int: return self._editor_state.background_y
+    @_background_y.setter
+    def _background_y(self, v: int): self._editor_state.background_y = v
+
+    @property
+    def _background_width(self) -> int: return self._editor_state.background_width
+    @_background_width.setter
+    def _background_width(self, v: int): self._editor_state.background_width = v
+
+    @property
+    def _background_height(self) -> int: return self._editor_state.background_height
+    @_background_height.setter
+    def _background_height(self, v: int): self._editor_state.background_height = v
     
+    @property
+    def video_config(self) -> Dict[str, Any]: return self._editor_state.video_config
+    @property
+    def _video_config(self) -> Dict[str, Any]: return self.video_config
+    @_video_config.setter
+    def _video_config(self, v: Dict[str, Any]): self._editor_state._video_config = v
+
+    @property
+    def theme_name(self) -> str: return self._editor_state.theme_name
+    @theme_name.setter
+    def theme_name(self, v: str): self._editor_state.theme_name = v
+    @property
+    def _theme_name(self) -> str: return self.theme_name
+    @_theme_name.setter
+    def _theme_name(self, v: str): self.theme_name = v
+
+    @property
+    def theme_folder(self) -> Optional[Path]: return self._editor_state.theme_folder
+    @theme_folder.setter
+    def theme_folder(self, v: Optional[Path]): self._editor_state.theme_folder = v
+    @property
+    def _theme_path(self) -> Optional[Path]: return self.theme_folder
+    @_theme_path.setter
+    def _theme_path(self, v: Optional[Path]): self.theme_folder = v
+
+    @property
+    def author(self) -> str: return self._editor_state.author
+    @author.setter
+    def author(self, v: str): self._editor_state.author = v
+    @property
+    def _author(self) -> str: return self.author
+    @_author.setter
+    def _author(self, v: str): self.author = v
+
+    @property
+    def _guides_h(self) -> List[int]: return self._editor_state._guides_h
+    @_guides_h.setter
+    def _guides_h(self, v: List[int]): self._editor_state._guides_h = v
+    @property
+    def _guides_v(self) -> List[int]: return self._editor_state._guides_v
+    @_guides_v.setter
+    def _guides_v(self, v: List[int]): self._editor_state._guides_v = v
+
+    @property
+    def guides_h(self) -> List[int]:
+        """Horizontal guide positions."""
+        return self._editor_state.guides_h
+        
+    @property
+    def guides_v(self) -> List[int]:
+        """Vertical guide positions."""
+        return self._editor_state.guides_v
+
     # --- QAbstractItemModel Implementation ---
     
     def index(self, row: int, column: int, parent: QModelIndex = QModelIndex()) -> QModelIndex:
@@ -644,6 +765,22 @@ class ThemeModel(QAbstractItemModel):
         
         return QModelIndex()
     
+    def set_guides(self, h_guides: List[int], v_guides: List[int]) -> None:
+        """
+        Set editor guides with undo support.
+        """
+        from theme_editor.commands.undo_commands import SetGuidesCommand
+        self._undo_stack.push(SetGuidesCommand(self, h_guides, v_guides))
+        
+    def _apply_guides(self, h_guides: List[int], v_guides: List[int]) -> None:
+        """
+        Actually apply guide changes to the state store.
+        (Internal use by SetGuidesCommand)
+        """
+        self._guides_h = h_guides
+        self._guides_v = v_guides
+        self.guides_changed.emit()
+
     # --- Theme Operations ---
     
     def clear(self) -> None:
@@ -1363,198 +1500,3 @@ class ThemeModel(QAbstractItemModel):
                      data["ui_elements"].append(element.to_dict())
         
         return data    
-    # --- Display Settings ---
-    
-    @property
-    def display_width(self) -> int:
-        """Get display width based on size and orientation."""
-        sizes = {
-            '2.1"': (480, 480),
-            '3.5"': (320, 480),
-            '5"': (480, 800),
-            '8.8"': (480, 1920),
-        }
-        w, h = sizes.get(self._display_size, (480, 800))
-        return w if self._display_orientation == "portrait" else h
-    
-    @property
-    def display_height(self) -> int:
-        """Get display height based on size and orientation."""
-        sizes = {
-            '2.1"': (480, 480),
-            '3.5"': (320, 480),
-            '5"': (480, 800),
-            '8.8"': (480, 1920),
-        }
-        w, h = sizes.get(self._display_size, (480, 800))
-        return h if self._display_orientation == "portrait" else w
-
-    @property
-    def theme_folder(self) -> Optional[Path]:
-        """Get the current theme directory."""
-        return self._theme_path
-
-    @property
-    def author(self) -> str:
-        """Get the theme author."""
-        return self._author
-    
-    @author.setter
-    def author(self, value: str):
-        """Set the theme author."""
-        self._author = value
-
-    # --- Guides ---
-    
-    @property
-    def guides_h(self) -> List[int]:
-        """Get horizontal guides."""
-        return self._guides_h
-        
-    @property
-    def guides_v(self) -> List[int]:
-        """Get vertical guides."""
-        return self._guides_v
-        
-    def set_guides(self, horizontal: List[int], vertical: List[int]):
-        """Set guides and emit signal."""
-        # Remove duplicates and sort
-        self._guides_h = sorted(list(set(horizontal)))
-        self._guides_v = sorted(list(set(vertical)))
-        self.guides_changed.emit()
-
-    def duplicate_element(self, element_id: str) -> Optional[str]:
-        """
-        Duplicate an element and its children.
-        
-        Args:
-            element_id: ID of element to duplicate
-            
-        Returns:
-            ID of the new element, or None if failed
-        """
-        element = self.get_element(element_id)
-        if not element:
-            return None
-            
-        # Helper to recursively copy
-        def copy_recursive(elem: Element, parent_id: Optional[str]) -> Element:
-            import copy
-            
-            # Manual copy of properties
-            props = elem.__dict__.copy()
-            # Remove identity fields
-            props.pop('id', None)
-            props.pop('parent_id', None)
-            props.pop('children', None)
-            
-            # Deep copy mutable properties
-            props = copy.deepcopy(props)
-            
-            new_elem = create_element(elem.element_type, **props)
-            
-            # Add to model
-            self.add_element(new_elem, parent_id)
-            
-            # Recurse children
-            for child_id in elem.children:
-                child = self.get_element(child_id)
-                if child:
-                    copy_recursive(child, new_elem.id)
-                    
-            return new_elem
-
-        # Duplicate
-        new_root = copy_recursive(element, element.parent_id)
-        
-        # Append " (Copy)" to the root name to differentiate
-        if hasattr(new_root, 'name'):
-            new_root.name = f"{new_root.name} (Copy)"
-        
-        self.layoutChanged.emit()
-        return new_root.id
-
-    def remove_element_tree(self, root_id: str) -> Dict[str, Element]:
-        """
-        Remove an element and all its descendants, returning them as a map.
-        
-        Args:
-            root_id: ID of the root element to remove
-            
-        Returns:
-            Dictionary mapping element IDs to Element objects
-        """
-        removed_map = {}
-        
-        # Helper to collect and remove
-        def collect_remove(eid: str):
-            elem = self._elements.get(eid)
-            if not elem:
-                return
-            
-            # Recurse first
-            children_copy = list(elem.children)
-            for child_id in children_copy:
-                collect_remove(child_id)
-            
-            # Remove from model dict
-            if eid in self._elements:
-                removed_map[eid] = self._elements.pop(eid)
-                
-        # Main remove logic
-        if root_id not in self._elements:
-            return {}
-            
-        root = self._elements[root_id]
-        
-        # Detach from parent
-        if root.parent_id:
-            parent = self._elements.get(root.parent_id)
-            if parent and root_id in parent.children:
-                parent.children.remove(root_id)
-        elif root_id in self._root_ids:
-            self._root_ids.remove(root_id)
-            
-        # Collect and remove all from _elements
-        collect_remove(root_id)
-        
-        self.layoutChanged.emit()
-        self.element_removed.emit(root_id)
-        
-        return removed_map
-
-    def restore_element_tree(self, element_map: Dict[str, Element], root_id: str, parent_id: Optional[str], index: int) -> None:
-        """
-        Restore a previously removed tree of elements.
-        
-        Args:
-            element_map: Dictionary of {id: Element} to restore
-            root_id: ID of the root element in the map
-            parent_id: ID of the parent to attach to
-            index: Index to insert at (in parent's children or root list)
-        """
-        if not element_map or root_id not in element_map:
-            return
-            
-        # Put all elements back into dict
-        self._elements.update(element_map)
-        
-        # Re-attach root to parent
-        root = element_map[root_id]
-        root.parent_id = parent_id
-        
-        if parent_id:
-            parent = self._elements.get(parent_id)
-            if parent:
-                if index >= 0 and index <= len(parent.children):
-                    parent.children.insert(index, root_id)
-                else:
-                    parent.children.append(root_id)
-        else:
-            if index >= 0 and index <= len(self._root_ids):
-                self._root_ids.insert(index, root_id)
-            else:
-                self._root_ids.append(root_id)
-                
-        self.layoutChanged.emit()
-        self.element_added.emit(root_id)

@@ -519,3 +519,27 @@ class DuplicateElementCommand(QUndoCommand):
             # So holding the Element object is sufficient.
             
             self._model.remove_element_tree(self._root_id)
+
+
+class SetGuidesCommand(QUndoCommand):
+    """Command for updating editor guides."""
+    
+    def __init__(
+        self,
+        model: ThemeModel,
+        h_guides: List[int],
+        v_guides: List[int],
+        parent: Optional[QUndoCommand] = None
+    ):
+        super().__init__("Set Guides", parent)
+        self._model = model
+        self._new_h = h_guides
+        self._new_v = v_guides
+        self._old_h = model.guides_h
+        self._old_v = model.guides_v
+        
+    def undo(self) -> None:
+        self._model._apply_guides(self._old_h, self._old_v)
+        
+    def redo(self) -> None:
+        self._model._apply_guides(self._new_h, self._new_v)

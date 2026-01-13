@@ -9,6 +9,13 @@ The Theme Editor MUST maintain a single source of truth for all application stat
 - **THEN** all registered UI components (Layer Panel, Canvas, Properties Panel) MUST automatically reflect this change via direct signal observation
 - **AND** there MUST NOT be any manual cross-component synchronization logic (e.g., recursive guards or debounce timers in MainWindow).
 
+#### Scenario: Locked Layer Selection Logic
+- **GIVEN** an element that is marked as `locked`
+- **WHEN** a user selects it in the `LayerPanel`
+- **THEN** it MUST be added to the `EditorState.selection` and the `PropertiesPanel` MUST display its properties.
+- **BUT** when the user attempts to select it by clicking on the `Canvas`, the `Canvas` MUST NOT update the `EditorState.selection` for that element.
+- **AND** even if selected via the `LayerPanel`, the `Canvas` MUST NOT allow any transformation (Move/Resize) of the locked element.
+
 ### Requirement: View Model Separation
 The Theme Editor SHALL use specialized View Models to project the central state for specific UI components.
 

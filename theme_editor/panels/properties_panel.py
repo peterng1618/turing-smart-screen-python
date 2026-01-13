@@ -9,89 +9,29 @@ Provides a property editor for the currently selected element with:
 """
 
 import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QScrollArea, QGroupBox, QFormLayout,
+    QWidget, QVBoxLayout, QScrollArea,
     QLabel, QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox,
-    QComboBox, QPushButton, QHBoxLayout, QColorDialog, QFileDialog,
-    QSizePolicy, QFrame, QMessageBox, QSlider
+    QComboBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QUndoStack, QColor
+from PyQt6.QtGui import QUndoStack
 
+from theme_editor.models.editor_state import EditorState
 from theme_editor.models.theme_model import ThemeModel
 from theme_editor.models.element import (
-    Element, Shadow, Outline,
-    RectangleElement, CircleElement, TriangleElement, LineElement,
-    TextElement, ImageElement, IconElement, DynamicTextElement,
-    BackgroundImageElement, BackgroundVideoElement, ThemeInfoElement
+    Element, TriangleElement
 )
+from theme_editor.panels.property_sections.registry import get_sections_for_element_type
+from theme_editor.panels.property_sections.base import PropertySection
+from theme_editor.widgets.color_button import ColorButton
 
 logger = logging.getLogger(__name__)
 
 
-class ColorButton(QPushButton):
-    """Button that shows a color preview and opens color picker."""
-    
-    color_changed = pyqtSignal(tuple)  # RGBA tuple
-    
-    def __init__(self, color: Tuple[int, int, int, int] = (255, 255, 255, 255), parent=None):
-        super().__init__(parent)
-        self._color = color
-        self.setMinimumWidth(60)
-        self.setMaximumHeight(24)
-        self._update_style()
-        self.clicked.connect(self._pick_color)
-    
-    @property
-    def color(self) -> Tuple[int, int, int, int]:
-        return self._color
-    
-    @color.setter
-    def color(self, value: Tuple[int, int, int, int]) -> None:
-        self._color = value
-        self._update_style()
-    
-    def _update_style(self) -> None:
-        """Update button background to show color and adjust text color for readability."""
-        r, g, b, a = self._color
-        
-        # Calculate luminance to determine if black or white text is more readable
-        # Standard formula: 0.299*R + 0.587*G + 0.114*B
-        # If the background is bright, use black text; if dark, use white text.
-        luminance = (0.299 * r + 0.587 * g + 0.114 * b)
-        text_color = "#000000" if luminance > 128 else "#ffffff"
-        
-        # We use a selector (ColorButton) to prevent the background-color 
-        # from leaking into child dialogs (like QColorDialog)
-        self.setStyleSheet(
-            f"ColorButton {{ "
-            f"  background-color: rgba({r}, {g}, {b}, {a}); "
-            f"  color: {text_color}; "
-            f"  border: 1px solid #888; "
-            f"  border-radius: 2px; "
-            f"  font-weight: bold; "
-            f"}} "
-            f"ColorButton:hover {{ "
-            f"  border: 1px solid #aaa; "
-            f"}}"
-        )
-        self.setText(f"{r},{g},{b},{a}")
-    
-    def _pick_color(self) -> None:
-        """Open color picker dialog."""
-        initial = QColor(*self._color)
-        color = QColorDialog.getColor(
-            initial,
-            self,
-            "Select Color",
-            QColorDialog.ColorDialogOption.ShowAlphaChannel
-        )
-        if color.isValid():
-            self._color = (color.red(), color.green(), color.blue(), color.alpha())
-            self._update_style()
-            self.color_changed.emit(self._color)
+
 
 
 class PropertiesPanel(QWidget):
@@ -105,23 +45,29 @@ class PropertiesPanel(QWidget):
     
     def __init__(
         self,
-        model: ThemeModel,
+        editor_state: EditorState,
+        theme_model: ThemeModel,
         undo_stack: QUndoStack,
         parent: Optional[QWidget] = None
     ):
         super().__init__(parent)
         self.setMinimumWidth(320)
         
-        self._model = model
+        self._editor_state = editor_state
+        self._model = theme_model
         self._undo_stack = undo_stack
         self._current_element_id: Optional[str] = None
+        self._sections: List[PropertySection] = []
         self._widgets: Dict[str, QWidget] = {}
         self._updating = False  # Prevent feedback loops
         self._aspect_ratio: float = 1.0  # Aspect ratio for W/H lock
         self._aspect_locked: bool = True  # W/H linked by default
         
         self._setup_ui()
-        self._model.element_changed.connect(self._on_model_element_changed)
+        
+        # Connect to Store
+        self._editor_state.element_changed.connect(self._on_model_element_changed)
+        self._editor_state.selection_changed.connect(self._on_store_selection_changed)
     
     def _on_model_element_changed(self, element_id: str, prop_name: str, value: Any) -> None:
         """Handle element changes from model (e.g. from canvas or undo)."""
@@ -137,7 +83,21 @@ class PropertiesPanel(QWidget):
                 self.update_property("width", max(xs) - min(xs))
                 self.update_property("height", max(ys) - min(ys))
         
-        self.update_property(prop_name, value)
+        if prop_name == "_insert_sensor":
+            self._insert_sensor_into_focused_widget(value)
+            return
+
+        # self.update_property(prop_name, value)
+        for section in self._sections:
+            section.update_single_property(prop_name, value)
+
+    def _on_store_selection_changed(self, element_ids: List[str]) -> None:
+        """Handle selection changes from the central store."""
+        if not element_ids:
+            self.clear()
+        else:
+            # For now, properties panel only supports single selection (show first)
+            self.show_properties(element_ids[0])
     
     def _setup_ui(self) -> None:
         """Set up the panel UI."""
@@ -169,8 +129,13 @@ class PropertiesPanel(QWidget):
             while self._content_layout.count() > 1:
                 item = self._content_layout.takeAt(1)
                 if item.widget():
+                    item.widget().hide()
+                    # We don't delete them yet if we want to reuse? 
+                    # Actually, for the POC, deleting is safer but reg-based re-use is better.
+                    # For now, let's stick to deleting like before but for modular sections.
                     item.widget().deleteLater()
             
+            self._sections.clear()
             self._widgets.clear()
             self._current_element_id = None
             self._placeholder.show()
@@ -180,10 +145,7 @@ class PropertiesPanel(QWidget):
     
     def show_properties(self, element_id: str) -> None:
         """
-        Show properties for the specified element.
-        
-        Args:
-            element_id: ID of element to show properties for
+        Show properties for the specified element using the modular registry.
         """
         element = self._model.get_element(element_id)
         if not element:
@@ -195,1075 +157,47 @@ class PropertiesPanel(QWidget):
         self._placeholder.hide()
         self._current_element_id = element_id
         
-        # Add property groups based on element type
-        self._add_identity_group(element)
+        # Get sections for this element type
+        section_classes = get_sections_for_element_type(element.element_type)
         
-        # Transform and Appearance
-        self._add_transform_group(element)
-        self._add_appearance_group(element)
-        
-        # Background-specific properties
-        if isinstance(element, BackgroundImageElement):
-            self._add_background_image_group(element)
-        elif isinstance(element, BackgroundVideoElement):
-            self._add_background_video_group(element)
-        elif isinstance(element, ThemeInfoElement):
-            self._add_theme_info_group(element)
-        
-        # Type-specific properties
-        if isinstance(element, TextElement) or isinstance(element, DynamicTextElement):
-            self._add_typography_group(element)
-            self._add_outline_section(element)
+        for section_class in section_classes:
+            section = section_class(self._editor_state, self._model, self)
+            section.property_changed.connect(
+                lambda name, val: self._on_property_changed(name, val)
+            )
+            section.set_element(element_id)
+            self._content_layout.addWidget(section)
+            self._sections.append(section)
             
-            if isinstance(element, ImageElement):
-                self._add_image_group(element)
-            
-            if isinstance(element, IconElement):
-                self._add_icon_group(element)
-            
-            if isinstance(element, DynamicTextElement):
-                self._add_sensor_group(element)
+            # Map widgets for the global update_property method (compatibility)
+            # This is a bit of a hack during transition
+            for name, widget in section._widgets.items():
+                self._widgets[name] = widget
         
         # Stretch at bottom
         self._content_layout.addStretch()
-    
-    def _add_identity_group(self, element: Element) -> None:
-        """Add identity properties group (name, type)."""
-        group = QGroupBox("Identity")
-        form = QFormLayout(group)
-        
-        # Name
-        name_edit = QLineEdit(element.name)
-        name_edit.textChanged.connect(
-            lambda v: self._on_property_changed("name", v)
-        )
-        form.addRow("Name:", name_edit)
-        self._widgets["name"] = name_edit
-        
-        # Type (read-only)
-        type_label = QLabel(element.element_type.name.title())
-        type_label.setStyleSheet("color: #aaa;")
-        form.addRow("Type:", type_label)
-        
-        self._content_layout.addWidget(group)
-    
-    def _add_transform_group(self, element: Element) -> None:
-        """Add transform properties group (position, size, rotation)."""
-        group = QGroupBox("Transform")
-        form = QFormLayout(group)
-        
-        # Position
-        pos_layout = QHBoxLayout()
-        x_spin = QSpinBox()
-        x_spin.setRange(-9999, 9999)
-        x_spin.setValue(element.x)
-        x_spin.valueChanged.connect(lambda v: self._on_property_changed("x", v))
-        pos_layout.addWidget(QLabel("X:"))
-        pos_layout.addWidget(x_spin)
-        self._widgets["x"] = x_spin
-        
-        y_spin = QSpinBox()
-        y_spin.setRange(-9999, 9999)
-        y_spin.setValue(element.y)
-        y_spin.valueChanged.connect(lambda v: self._on_property_changed("y", v))
-        pos_layout.addWidget(QLabel("Y:"))
-        pos_layout.addWidget(y_spin)
-        self._widgets["y"] = y_spin
-        
-        form.addRow("Position:", pos_layout)
-        
-        # Size with link/unlink button (if applicable)
-        is_triangle = isinstance(element, TriangleElement)
-        if (hasattr(element, 'width') and hasattr(element, 'height') and not isinstance(element, LineElement)) or is_triangle:
-            size_layout = QHBoxLayout()
-            
-            # W spinbox
-            w_spin = QSpinBox()
-            w_spin.setRange(1, 9999)
-            if is_triangle:
-                xs = [element.x1, element.x2, element.x3]
-                w_spin.setValue(int(max(xs) - min(xs)))
-            else:
-                w_spin.setValue(element.width)
-            size_layout.addWidget(QLabel("W:"))
-            size_layout.addWidget(w_spin)
-            self._widgets["width"] = w_spin
-            
-            # Link/Unlink toggle button
-            link_btn = QPushButton("🔗")
-            link_btn.setCheckable(True)
-            link_btn.setChecked(True)  # Linked by default
-            link_btn.setFixedWidth(28)
-            link_btn.setToolTip("Lock aspect ratio")
-            link_btn.toggled.connect(self._on_aspect_lock_toggled)
-            size_layout.addWidget(link_btn)
-            self._widgets["aspect_lock"] = link_btn
-            
-            if is_triangle:
-                xs = [element.x1, element.x2, element.x3]
-                ys = [element.y1, element.y2, element.y3]
-                cur_w = max(xs) - min(xs)
-                cur_h = max(ys) - min(ys)
-                self._aspect_ratio = cur_w / max(1, cur_h)
-            else:
-                self._aspect_ratio = element.width / max(1, element.height)
-            self._aspect_locked = True
-            
-            # H spinbox
-            h_spin = QSpinBox()
-            h_spin.setRange(1, 9999)
-            if is_triangle:
-                ys = [element.y1, element.y2, element.y3]
-                h_spin.setValue(int(max(ys) - min(ys)))
-            else:
-                h_spin.setValue(element.height)
-            size_layout.addWidget(QLabel("H:"))
-            size_layout.addWidget(h_spin)
-            self._widgets["height"] = h_spin
-            
-            # Connect with aspect ratio handling
-            w_spin.valueChanged.connect(lambda v: self._on_width_changed(v))
-            h_spin.valueChanged.connect(lambda v: self._on_height_changed(v))
-            
-            form.addRow("Size:", size_layout)
-        
-        # Radius (for circles)
-        if hasattr(element, 'radius') and isinstance(element, CircleElement):
-            radius_spin = QSpinBox()
-            radius_spin.setRange(1, 9999)
-            radius_spin.setValue(element.radius)
-            radius_spin.valueChanged.connect(lambda v: self._on_property_changed("radius", v))
-            form.addRow("Radius:", radius_spin)
-            self._widgets["radius"] = radius_spin
-        
-        # Font size (for icons)
-        if isinstance(element, IconElement):
-            size_spin = QSpinBox()
-            size_spin.setRange(8, 512)
-            size_spin.setValue(element.size)
-            size_spin.setSuffix(" px")
-            size_spin.valueChanged.connect(lambda v: self._on_property_changed("size", v))
-            form.addRow("Font Size:", size_spin)
-            self._widgets["size"] = size_spin
-        
-        # Triangle points
-        if isinstance(element, TriangleElement):
-            # Point 1
-            p1_layout = QHBoxLayout()
-            x1_spin = QSpinBox()
-            x1_spin.setRange(-9999, 9999)
-            x1_spin.setValue(element.x1)
-            x1_spin.valueChanged.connect(lambda v: self._on_property_changed("x1", v))
-            p1_layout.addWidget(QLabel("X1:"))
-            p1_layout.addWidget(x1_spin)
-            y1_spin = QSpinBox()
-            y1_spin.setRange(-9999, 9999)
-            y1_spin.setValue(element.y1)
-            y1_spin.valueChanged.connect(lambda v: self._on_property_changed("y1", v))
-            p1_layout.addWidget(QLabel("Y1:"))
-            p1_layout.addWidget(y1_spin)
-            form.addRow("Point 1:", p1_layout)
-            self._widgets["x1"] = x1_spin
-            self._widgets["y1"] = y1_spin
-            
-            # Point 2
-            p2_layout = QHBoxLayout()
-            x2_spin = QSpinBox()
-            x2_spin.setRange(-9999, 9999)
-            x2_spin.setValue(element.x2)
-            x2_spin.valueChanged.connect(lambda v: self._on_property_changed("x2", v))
-            p2_layout.addWidget(QLabel("X2:"))
-            p2_layout.addWidget(x2_spin)
-            y2_spin = QSpinBox()
-            y2_spin.setRange(-9999, 9999)
-            y2_spin.setValue(element.y2)
-            y2_spin.valueChanged.connect(lambda v: self._on_property_changed("y2", v))
-            p2_layout.addWidget(QLabel("Y2:"))
-            p2_layout.addWidget(y2_spin)
-            form.addRow("Point 2:", p2_layout)
-            self._widgets["x2"] = x2_spin
-            self._widgets["y2"] = y2_spin
-            
-            # Point 3
-            p3_layout = QHBoxLayout()
-            x3_spin = QSpinBox()
-            x3_spin.setRange(-9999, 9999)
-            x3_spin.setValue(element.x3)
-            x3_spin.valueChanged.connect(lambda v: self._on_property_changed("x3", v))
-            p3_layout.addWidget(QLabel("X3:"))
-            p3_layout.addWidget(x3_spin)
-            y3_spin = QSpinBox()
-            y3_spin.setRange(-9999, 9999)
-            y3_spin.setValue(element.y3)
-            y3_spin.valueChanged.connect(lambda v: self._on_property_changed("y3", v))
-            p3_layout.addWidget(QLabel("Y3:"))
-            p3_layout.addWidget(y3_spin)
-            form.addRow("Point 3:", p3_layout)
-            self._widgets["x3"] = x3_spin
-            self._widgets["y3"] = y3_spin
-        
-        # Line end point
-        if isinstance(element, LineElement):
-            end_layout = QHBoxLayout()
-            x2_spin = QSpinBox()
-            x2_spin.setRange(-9999, 9999)
-            x2_spin.setValue(element.x2)
-            x2_spin.valueChanged.connect(lambda v: self._on_property_changed("x2", v))
-            end_layout.addWidget(QLabel("X2:"))
-            end_layout.addWidget(x2_spin)
-            y2_spin = QSpinBox()
-            y2_spin.setRange(-9999, 9999)
-            y2_spin.setValue(element.y2)
-            y2_spin.valueChanged.connect(lambda v: self._on_property_changed("y2", v))
-            end_layout.addWidget(QLabel("Y2:"))
-            end_layout.addWidget(y2_spin)
-            form.addRow("End Point:", end_layout)
-            self._widgets["x2"] = x2_spin
-            self._widgets["y2"] = y2_spin
-        
-        # Angle
-        if not isinstance(element, LineElement):
-            angle_spin = QDoubleSpinBox()
-            angle_spin.setRange(-360, 360)
-            angle_spin.setValue(element.angle)
-            angle_spin.setSuffix("°")
-            angle_spin.valueChanged.connect(lambda v: self._on_property_changed("angle", v))
-            form.addRow("Rotation:", angle_spin)
-            self._widgets["angle"] = angle_spin
-        
-        self._content_layout.addWidget(group)
-    
-    def _add_appearance_group(self, element: Element) -> None:
-        """Add appearance properties group (color, opacity)."""
-        group = QGroupBox("Appearance")
-        form = QFormLayout(group)
-        
-        # Color (if applicable)
-        if hasattr(element, 'color'):
-            color_btn = ColorButton(element.color)
-            color_btn.color_changed.connect(
-                lambda v: self._on_property_changed("color", v)
-            )
-            form.addRow("Color:", color_btn)
-            self._widgets["color"] = color_btn
-        
-        # Opacity
-        opacity_layout = QHBoxLayout()
-        opacity_slider = QSlider(Qt.Orientation.Horizontal)
-        opacity_slider.setRange(0, 100)
-        opacity_slider.setValue(int(element.opacity * 100))
-        
-        opacity_spin = QDoubleSpinBox()
-        opacity_spin.setRange(0.0, 1.0)
-        opacity_spin.setSingleStep(0.1)
-        opacity_spin.setValue(element.opacity)
-        
-        opacity_slider.valueChanged.connect(
-            lambda v: opacity_spin.setValue(v / 100)
-        )
-        opacity_spin.valueChanged.connect(
-            lambda v: self._on_property_changed("opacity", v)
-        )
-        
-        opacity_layout.addWidget(opacity_slider)
-        opacity_layout.addWidget(opacity_spin)
-        form.addRow("Opacity:", opacity_layout)
-        self._widgets["opacity"] = opacity_spin
-        
-        # Visibility
-        visible_check = QCheckBox()
-        visible_check.setChecked(element.visible)
-        visible_check.toggled.connect(
-            lambda v: self._on_property_changed("visible", v)
-        )
-        form.addRow("Visible:", visible_check)
-        self._widgets["visible"] = visible_check
-        
-        # Corner radius (for rectangles)
-        if hasattr(element, 'radius') and isinstance(element, RectangleElement):
-            radius_spin = QSpinBox()
-            radius_spin.setRange(0, 999)
-            radius_spin.setValue(element.radius)
-            radius_spin.valueChanged.connect(lambda v: self._on_property_changed("radius", v))
-            form.addRow("Corner Radius:", radius_spin)
-            self._widgets["radius"] = radius_spin
-        
-        # Shear (for rectangles)
-        if isinstance(element, RectangleElement):
-            shear_layout = QHBoxLayout()
-            
-            shear_left = QDoubleSpinBox()
-            shear_left.setRange(-89, 89)
-            shear_left.setValue(element.shear_left)
-            shear_left.setSuffix("°")
-            shear_left.valueChanged.connect(lambda v: self._on_property_changed("shear_left", v))
-            shear_layout.addWidget(QLabel("L:"))
-            shear_layout.addWidget(shear_left)
-            self._widgets["shear_left"] = shear_left
-            
-            shear_right = QDoubleSpinBox()
-            shear_right.setRange(-89, 89)
-            shear_right.setValue(element.shear_right)
-            shear_right.setSuffix("°")
-            shear_right.valueChanged.connect(lambda v: self._on_property_changed("shear_right", v))
-            shear_layout.addWidget(QLabel("R:"))
-            shear_layout.addWidget(shear_right)
-            self._widgets["shear_right"] = shear_right
-            
-            form.addRow("Shear:", shear_layout)
-        
-        # Line width and cap
-        if isinstance(element, LineElement):
-            width_spin = QSpinBox()
-            width_spin.setRange(1, 100)
-            width_spin.setValue(element.line_width)
-            width_spin.valueChanged.connect(lambda v: self._on_property_changed("line_width", v))
-            form.addRow("Stroke Width:", width_spin)
-            self._widgets["line_width"] = width_spin
-            
-            cap_combo = QComboBox()
-            cap_combo.addItems(["butt", "round"])
-            cap_combo.setCurrentText(element.end_cap)
-            cap_combo.currentTextChanged.connect(lambda v: self._on_property_changed("end_cap", v))
-            form.addRow("End Cap:", cap_combo)
-            self._widgets["end_cap"] = cap_combo
-        
-        # Nested Outline & Shadow sections
-        if isinstance(element, (RectangleElement, CircleElement, TriangleElement, LineElement, ImageElement)):
-            self._add_outline_section(element, form)
-            
-        self._add_shadow_section(element, form)
-        
-        self._content_layout.addWidget(group)
-    
-        self._content_layout.addWidget(group)
-    
-    def _add_outline_section(self, element: Element, form: QFormLayout) -> None:
-        """Add outline properties section."""
-        # Separator
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setFrameShadow(QFrame.Shadow.Sunken)
-        form.addRow(line)
-        
-        # Enable toggle
-        has_outline = element.outline is not None
-        check = QCheckBox("Outline")
-        check.setChecked(has_outline)
-        check.toggled.connect(self._on_outline_enabled_toggled)
-        form.addRow(check)
-        self._widgets["outline_enabled"] = check
-        
-        if has_outline and element.outline:
-            # Width
-            w_spin = QSpinBox()
-            w_spin.setRange(1, 100)
-            w_spin.setValue(element.outline.width)
-            w_spin.valueChanged.connect(lambda v: self._on_outline_property_changed("width", v))
-            form.addRow("  Width:", w_spin)
-            self._widgets["outline_width"] = w_spin
-            
-            # Color
-            c_btn = ColorButton(element.outline.color)
-            c_btn.color_changed.connect(lambda v: self._on_outline_property_changed("color", v))
-            form.addRow("  Color:", c_btn)
-            self._widgets["outline_color"] = c_btn
-            
-            # Cap style
-            cap = QComboBox()
-            cap.addItems(["butt", "round", "square"])
-            cap.setCurrentText(element.outline.cap)
-            cap.currentTextChanged.connect(lambda v: self._on_outline_property_changed("cap", v))
-            form.addRow("  Cap:", cap)
-            self._widgets["outline_cap"] = cap
-
-    def _add_shadow_section(self, element: Element, form: QFormLayout) -> None:
-        """Add shadow properties section."""
-        # Separator
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setFrameShadow(QFrame.Shadow.Sunken)
-        form.addRow(line)
-        
-        # Enable toggle
-        has_shadow = element.shadow is not None
-        check = QCheckBox("Shadow")
-        check.setChecked(has_shadow)
-        check.toggled.connect(self._on_shadow_enabled_toggled)
-        form.addRow(check)
-        self._widgets["shadow_enabled"] = check
-        
-        if has_shadow and element.shadow:
-            # Blur
-            b_spin = QSpinBox()
-            b_spin.setRange(0, 50)
-            b_spin.setValue(element.shadow.blur)
-            b_spin.valueChanged.connect(lambda v: self._on_shadow_property_changed("blur", v))
-            form.addRow("  Blur:", b_spin)
-            self._widgets["shadow_blur"] = b_spin
-            
-            # Color
-            c_btn = ColorButton(element.shadow.color)
-            c_btn.color_changed.connect(lambda v: self._on_shadow_property_changed("color", v))
-            form.addRow("  Color:", c_btn)
-            self._widgets["shadow_color"] = c_btn
-            
-            # Offset
-            off_layout = QHBoxLayout()
-            
-            ox = QSpinBox()
-            ox.setRange(-50, 50)
-            ox.setValue(element.shadow.offset_x)
-            ox.valueChanged.connect(lambda v: self._on_shadow_property_changed("offset_x", v))
-            off_layout.addWidget(QLabel("X:"))
-            off_layout.addWidget(ox)
-            self._widgets["shadow_offset_x"] = ox
-            
-            oy = QSpinBox()
-            oy.setRange(-50, 50)
-            oy.setValue(element.shadow.offset_y)
-            oy.valueChanged.connect(lambda v: self._on_shadow_property_changed("offset_y", v))
-            off_layout.addWidget(QLabel("Y:"))
-            off_layout.addWidget(oy)
-            self._widgets["shadow_offset_y"] = oy
-            
-            form.addRow("  Offset:", off_layout)
-
-    def _add_typography_group(self, element: Element) -> None:
-        """Add typography properties group (font, size, align)."""
-        group = QGroupBox("Typography")
-        form = QFormLayout(group)
-        
-        # Text content
-        if hasattr(element, 'text'):
-            text_edit = QLineEdit(element.text)
-            text_edit.textChanged.connect(
-                lambda v: self._on_property_changed("text", v)
-            )
-            form.addRow("Text:", text_edit)
-            self._widgets["text"] = text_edit
-        
-        # Font
-        font_layout = QHBoxLayout()
-        font_label = QLabel(element.font if hasattr(element, 'font') else "")
-        font_label.setStyleSheet("color: #aaa; font-size: 10px;")
-        font_label.setMaximumWidth(180)
-        full_font_path = element.font if hasattr(element, 'font') else ""
-        font_label.setToolTip(f"<span style='color: white; background: #333; padding: 4px;'>{full_font_path}</span>")
-        font_btn = QPushButton("...")
-        font_btn.setFixedWidth(32)
-        font_btn.setToolTip("Choose font from res/fonts")
-        font_btn.clicked.connect(self._pick_font)
-        font_layout.addWidget(font_label, 1)
-        font_layout.addWidget(font_btn)
-        form.addRow("Font:", font_layout)
-        self._widgets["font_label"] = font_label
-        
-        # Font size
-        if hasattr(element, 'font_size'):
-            size_spin = QSpinBox()
-            size_spin.setRange(6, 1000)
-            # Clamp value to spinbox range to prevent overflow
-            clamped_size = max(6, min(1000, int(element.font_size)))
-            size_spin.setValue(clamped_size)
-            size_spin.valueChanged.connect(lambda v: self._on_property_changed("font_size", v))
-            form.addRow("Size:", size_spin)
-            self._widgets["font_size"] = size_spin
-        
-        # Alignment
-        if hasattr(element, 'align'):
-            align_combo = QComboBox()
-            align_combo.addItems(["left", "center", "right"])
-            align_combo.setCurrentText(element.align)
-            align_combo.currentTextChanged.connect(
-                lambda v: self._on_property_changed("align", v)
-            )
-            form.addRow("Align:", align_combo)
-            self._widgets["align"] = align_combo
-            
-        # Anchor (Pillow style)
-        if hasattr(element, 'anchor'):
-            anchor_combo = QComboBox()
-            # Common Pillow anchors: 
-            # Horizontal: l (left), m (middle), r (right)
-            # Vertical: t (top, baseline), m (middle), b (bottom), a (ascender), d (descender)
-            # We'll stick to common ones for now
-            anchors = ["lt", "lm", "lb", "mt", "mm", "mb", "rt", "rm", "rb"]
-            anchor_combo.addItems(anchors)
-            anchor_combo.setCurrentText(element.anchor)
-            anchor_combo.currentTextChanged.connect(
-                lambda v: self._on_property_changed("anchor", v)
-            )
-            form.addRow("Anchor:", anchor_combo)
-            self._widgets["anchor"] = anchor_combo
-        
-        self._content_layout.addWidget(group)
-    
-    def _add_image_group(self, element: ImageElement) -> None:
-        """Add image properties group (path, browse)."""
-        
-        group = QGroupBox("Image Source")
-        layout = QVBoxLayout(group)
-        
-        # Current path
-        path_layout = QHBoxLayout()
-        path_label.setStyleSheet("color: #aaa; font-size: 10px;")  # noqa: F821
-        path_label.setWordWrap(True)  # noqa: F821
-        path_label.setToolTip(element.path)  # noqa: F821
-        path_layout.addWidget(path_label, 1)  # noqa: F821
-        
-        browse_btn = QPushButton("Browse...")
-        browse_btn.setFixedWidth(70)
-        browse_btn.clicked.connect(lambda: self._pick_image())
-        path_layout.addWidget(browse_btn)
-        
-        layout.addLayout(path_layout)
-        self._widgets["path_label"] = path_label  # noqa: F821
-        
-        self._content_layout.addWidget(group)
-    
-    def _pick_image(self) -> None:
-        """Open file dialog to select an image."""
-        from pathlib import Path
-        
-        # Start from theme folder if available
-        start_dir = ""
-        if hasattr(self._model, 'theme_folder') and self._model.theme_folder:
-            start_dir = str(self._model.theme_folder)
-        
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Image",
-            start_dir,
-            "Image Files (*.png *.jpg *.jpeg *.gif *.bmp *.webp);;All Files (*)"
-        )
-        
-        if file_path:
-            self._on_property_changed("path", file_path)
-            if "path_label" in self._widgets:
-                self._widgets["path_label"].setText(file_path)
-                self._widgets["path_label"].setToolTip(file_path)
-            
-            # Auto-set width/height from image
-            try:
-                # Load image to get dimensions
-                # Use absolute path if possible, but we might be relative to theme
-                # Try simple load first
-                from PIL import Image
-                img_path = Path(file_path)
-                
-                # If path is relative, we might need to resolve it (but file_path from dialog is usually absolute)
-                if img_path.exists():
-                     with Image.open(img_path) as img:
-                         width, height = img.size
-                         
-                         # Update element properties
-                         # We need to update both simultaneously ideally, but sequential is fine
-                         self._on_property_changed("width", width)
-                         self._on_property_changed("height", height)
-                         
-                         # Update UI widgets if they exist
-                         if "width" in self._widgets:
-                             self._widgets["width"].setValue(width)
-                         if "height" in self._widgets:
-                             self._widgets["height"].setValue(height)
-            except Exception as e:
-                logger.error(f"Failed to auto-size image: {e}")
-    
-    def _add_icon_group(self, element: IconElement) -> None:
-        """Add icon properties group (FontAwesome URL)."""
-        group = QGroupBox("Icon Source")
-        layout = QVBoxLayout(group)
-        
-        # URL input
-        url_label = QLabel("FontAwesome URL:")
-        url_label.setStyleSheet("color: #aaa; font-size: 10px;")
-        layout.addWidget(url_label)
-        
-        url_edit = QLineEdit(element.icon if element.icon else "")
-        url_edit.setPlaceholderText("https://fontawesome.com/icons/laptop-code?f=classic&s=solid")
-        url_edit.textChanged.connect(
-            lambda v: self._on_property_changed("icon", v)
-        )
-        layout.addWidget(url_edit)
-        self._widgets["icon"] = url_edit
-        
-        # Help text
-        help_label.setStyleSheet("color: #999; font-size: 9px;")  # noqa: F821
-        help_label.setWordWrap(True)  # noqa: F821
-        layout.addWidget(help_label)  # noqa: F821
-        
-        self._content_layout.addWidget(group)
-    
-    def _add_background_image_group(self, element: 'BackgroundImageElement') -> None:
-        """Add background image properties group."""
-        group = QGroupBox("Background Image Settings")
-        layout = QVBoxLayout(group)
-        
-        # Source path with browse
-        path_layout = QHBoxLayout()
-        path_label = QLabel("Source:")
-        path_label.setFixedWidth(50)
-        path_layout.addWidget(path_label)
-        
-        path_edit = QLineEdit(element.path if element.path else "background.png")
-        path_edit.setReadOnly(True)
-        path_edit.setStyleSheet("background: #333;")
-        path_layout.addWidget(path_edit, 1)
-        self._widgets["bg_path"] = path_edit
-        
-        browse_btn = QPushButton("...")
-        browse_btn.setFixedWidth(32)
-        browse_btn.clicked.connect(self._pick_background_image)
-        path_layout.addWidget(browse_btn)
-        layout.addLayout(path_layout)
-        
-        self._content_layout.addWidget(group)
-    
-    def _add_background_video_group(self, element: 'BackgroundVideoElement') -> None:
-        """Add background video properties group."""
-        group = QGroupBox("Background Video Settings")
-        layout = QVBoxLayout(group)
-        
-        # Enabled toggle
-        enabled_check = QCheckBox("Enabled")
-        enabled_check.setChecked(element.enabled)
-        enabled_check.toggled.connect(lambda v: self._on_property_changed("enabled", v))
-        layout.addWidget(enabled_check)
-        self._widgets["enabled"] = enabled_check
-        
-        # Source path with browse
-        path_layout = QHBoxLayout()
-        path_label = QLabel("Source:")
-        path_label.setFixedWidth(50)
-        path_layout.addWidget(path_label)
-        
-        path_edit = QLineEdit(element.source_path if element.source_path else "(no video)")
-        path_edit.setReadOnly(True)
-        path_edit.setStyleSheet("background: #333;")
-        path_layout.addWidget(path_edit, 1)
-        self._widgets["source_path_label"] = path_edit
-        
-        browse_btn = QPushButton("...")
-        browse_btn.setFixedWidth(32)
-        browse_btn.clicked.connect(self._pick_background_video)
-        path_layout.addWidget(browse_btn)
-        layout.addLayout(path_layout)
-        
-        # Video Processing section
-        processing_group = QGroupBox("Video Processing")
-        proc_form = QFormLayout(processing_group)
-        
-        # Start Offset (mm:ss)
-        start_edit = QLineEdit(element.start_offset)
-        start_edit.setPlaceholderText("00:00")
-        start_edit.textChanged.connect(lambda v: self._on_property_changed("start_offset", v))
-        proc_form.addRow("Start Offset:", start_edit)
-        self._widgets["start_offset"] = start_edit
-        
-        # Duration
-        duration_edit = QLineEdit(element.duration)
-        duration_edit.setPlaceholderText("(full video)")
-        duration_edit.textChanged.connect(lambda v: self._on_property_changed("duration", v))
-        proc_form.addRow("Duration:", duration_edit)
-        self._widgets["duration"] = duration_edit
-        
-        # Loop Fade
-        fade_spin = QDoubleSpinBox()
-        fade_spin.setRange(0.0, 10.0)
-        fade_spin.setSingleStep(0.5)
-        fade_spin.setValue(element.loop_fade_duration)
-        fade_spin.setSuffix(" sec")
-        fade_spin.valueChanged.connect(lambda v: self._on_property_changed("loop_fade_duration", v))
-        proc_form.addRow("Loop Fade:", fade_spin)
-        self._widgets["loop_fade_duration"] = fade_spin
-        
-        layout.addWidget(processing_group)
-        self._content_layout.addWidget(group)
-    
-    def _pick_background_image(self) -> None:
-        """Open file dialog to select a background image."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Background Image",
-            "",
-            "Image Files (*.png *.jpg *.jpeg);;All Files (*)"
-        )
-        if file_path:
-            self._on_property_changed("path", file_path)
-            if "bg_path" in self._widgets:
-                self._widgets["bg_path"].setText(file_path)
-
-    def _add_theme_info_group(self, element: 'ThemeInfoElement') -> None:
-        """
-        Add theme info properties group with buffered editing (Save/Cancel).
-        """
-        group = QGroupBox("Theme Settings")
-        form = QFormLayout(group)
-        
-        # We store widgets in a local dict to read values on Save
-        self._theme_widgets = {}
-        
-        # Author
-        author_edit = QLineEdit(element.author)
-        form.addRow("Author:", author_edit)
-        self._theme_widgets["author"] = author_edit
-        
-        # Display Size
-        size_combo = QComboBox()
-        size_combo.addItems(["2.1\"", "3.5\"", "5\"", "8.8\""])
-        size_combo.setCurrentText(element.display_size)
-        form.addRow("Display Size:", size_combo)
-        self._theme_widgets["display_size"] = size_combo
-        
-        # Orientation
-        orient_combo = QComboBox()
-        orient_combo.addItems(["landscape", "portrait"])
-        orient_combo.setCurrentText(element.display_orientation)
-        form.addRow("Orientation:", orient_combo)
-        self._theme_widgets["display_orientation"] = orient_combo
-        
-        # RGB LED
-        # Convert RGB tuple to RGBA for button (A=255)
-        r, g, b = element.display_rgb_led
-        rgb_btn = ColorButton((r, g, b, 255))
-        form.addRow("RGB LED:", rgb_btn)
-        self._theme_widgets["display_rgb_led"] = rgb_btn
-        
-        # Buttons
-        btn_layout = QHBoxLayout()
-        
-        save_btn = QPushButton("Save Settings")
-        save_btn.setStyleSheet("background-color: #2e8b57; color: white; font-weight: bold;")
-        save_btn.clicked.connect(lambda: self._save_theme_info(element))
-        btn_layout.addWidget(save_btn)
-        
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(lambda: self._revert_theme_info(element))
-        btn_layout.addWidget(cancel_btn)
-        
-        form.addRow(btn_layout)
-        
-        self._content_layout.addWidget(group)
-        
-        # Note: We don't add these to self._widgets to avoid auto-updates from model
-        # invalidating our buffered state while typing? 
-        # Actually standard behavior is: if model changes (undo), UI updates.
-        # But here we want a buffer. If undo happens, we should probably update the UI to match.
-        # So we should register them in self._widgets for _on_model_element_changed to find them,
-        # BUT we shouldn't connect their signals to _on_property_changed.
-        # However, _on_model_element_changed calls update_property which expects specific widget types/names.
-        # To avoid complexity, we'll skip registering in self._widgets for now, meaning Undo won't 
-        # update this specific panel while it's open, which is acceptable for a "Dialog-like" form.
-    
-    def _save_theme_info(self, element: 'ThemeInfoElement') -> None:
-        """Apply buffered theme info changes."""
-        # Read new values
-        new_author = self._theme_widgets["author"].text()
-        new_size = self._theme_widgets["display_size"].currentText()
-        new_orient = self._theme_widgets["display_orientation"].currentText()
-        
-        # Handle Color
-        c_btn = self._theme_widgets["display_rgb_led"]
-        new_rgb = (c_btn.color[0], c_btn.color[1], c_btn.color[2])
-        
-        # Check for critical changes
-        size_changed = new_size != element.display_size
-        orient_changed = new_orient != element.display_orientation
-        
-        if size_changed or orient_changed:
-            ret = QMessageBox.warning(
-                self,
-                "Layout Change",
-                "Changing display size or orientation may require adjusting element positions.\n\n"
-                "The canvas will be reloaded. Continue?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if ret != QMessageBox.StandardButton.Yes:
-                return
-        
-        # Apply changes (this will trigger model signals -> undo stack -> autosave etc)
-        # Using undo stack macro would be nice, but simple consecutive updates are fine
-        if new_author != element.author:
-            self._on_property_changed("author", new_author)
-        if new_rgb != element.display_rgb_led:
-            self._on_property_changed("display_rgb_led", new_rgb)
-            
-        # Do size/orient last as they might trigger layout refresh
-        if size_changed:
-            self._on_property_changed("display_size", new_size)
-        if orient_changed:
-            self._on_property_changed("display_orientation", new_orient)
-            
-        # Update name if changed via Identity group (which is live)
-        # That's handled separately by Identity group.
-    
-    def _revert_theme_info(self, element: 'ThemeInfoElement') -> None:
-        """Revert widgets to current element values."""
-        self._theme_widgets["author"].setText(element.author)
-        self._theme_widgets["display_size"].setCurrentText(element.display_size)
-        self._theme_widgets["display_orientation"].setCurrentText(element.display_orientation)
-        r, g, b = element.display_rgb_led
-        self._theme_widgets["display_rgb_led"].color = (r, g, b, 255)
-    
-    def _pick_background_video(self) -> None:
-        """Open file dialog to select a background video."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Background Video",
-            "",
-            "Video Files (*.mp4 *.webm *.mov *.avi);;All Files (*)"
-        )
-        if file_path:
-            self._on_property_changed("source_path", file_path)
-            if "source_path_label" in self._widgets:
-                self._widgets["source_path_label"].setText(file_path)
-    
-    def _add_shadow_group(self, element: Element) -> None:
-        """Add shadow properties group."""
-        if not element.shadow:
-            return
-        
-        group = QGroupBox("Shadow")
-        form = QFormLayout(group)
-        
-        # Blur
-        blur_spin = QSpinBox()
-        blur_spin.setRange(0, 100)
-        blur_spin.setValue(element.shadow.blur)
-        blur_spin.valueChanged.connect(
-            lambda v: self._on_shadow_property_changed("blur", v)
-        )
-        form.addRow("Blur:", blur_spin)
-        
-        # Color
-        color_btn = ColorButton(element.shadow.color)
-        color_btn.color_changed.connect(
-            lambda v: self._on_shadow_property_changed("color", v)
-        )
-        form.addRow("Color:", color_btn)
-        
-        # Offset
-        offset_layout = QHBoxLayout()
-        offset_x = QSpinBox()
-        offset_x.setRange(-100, 100)
-        offset_x.setValue(element.shadow.offset_x)
-        offset_x.valueChanged.connect(
-            lambda v: self._on_shadow_property_changed("offset_x", v)
-        )
-        offset_layout.addWidget(QLabel("X:"))
-        offset_layout.addWidget(offset_x)
-        
-        offset_y = QSpinBox()
-        offset_y.setRange(-100, 100)
-        offset_y.setValue(element.shadow.offset_y)
-        offset_y.valueChanged.connect(
-            lambda v: self._on_shadow_property_changed("offset_y", v)
-        )
-        offset_layout.addWidget(QLabel("Y:"))
-        offset_layout.addWidget(offset_y)
-        form.addRow("Offset:", offset_layout)
-        
-        self._content_layout.addWidget(group)
-    
-    def _add_outline_group(self, element: Element) -> None:
-        """Add outline properties group."""
-        if not hasattr(element, 'outline') or not element.outline:
-            return
-        
-        group = QGroupBox("Outline")
-        form = QFormLayout(group)
-        
-        # Width
-        width_spin = QSpinBox()
-        width_spin.setRange(0, 50)
-        width_spin.setValue(element.outline.width)
-        width_spin.valueChanged.connect(
-            lambda v: self._on_outline_property_changed("width", v)
-        )
-        form.addRow("Width:", width_spin)
-        
-        # Color
-        color_btn = ColorButton(element.outline.color)
-        color_btn.color_changed.connect(
-            lambda v: self._on_outline_property_changed("color", v)
-        )
-        form.addRow("Color:", color_btn)
-        
-        self._content_layout.addWidget(group)
-    
-    def _add_sensor_group(self, element: DynamicTextElement) -> None:
-        """Add dynamic settings properties group."""
-        group = QGroupBox("Dynamic Settings")
-        layout = QVBoxLayout(group)
-        
-        # Interval row
-        interval_layout = QHBoxLayout()
-        interval_label = QLabel("Refresh:")
-        interval_spin = QDoubleSpinBox()
-        interval_spin.setRange(0.1, 60.0)
-        interval_spin.setSingleStep(0.5)
-        interval_spin.setValue(element.interval)
-        interval_spin.setSuffix(" sec")
-        interval_spin.valueChanged.connect(
-            lambda v: self._on_property_changed("interval", v)
-        )
-        interval_layout.addWidget(interval_label)
-        interval_layout.addWidget(interval_spin, 1)
-        layout.addLayout(interval_layout)
-
-        # Force Static row
-        force_static_check = QCheckBox("Force Static Width/Height")
-        force_static_check.setToolTip("If checked, width/height are fixed and won't auto-resize to fit text content.")
-        force_static_check.setChecked(getattr(element, 'force_static', False))
-        force_static_check.toggled.connect(lambda v: self._on_property_changed("force_static", v))
-        layout.addWidget(force_static_check)
-        self._widgets["force_static"] = force_static_check
-
-        # Available sensors label
-        sensors_label = QLabel("Insert Sensor (Click button to add):")
-        sensors_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 8px;")
-        layout.addWidget(sensors_label)
-        
-        # Comprehensive sensor list with all flag variants
-        # (Category, [(sensor_id, label, [flags])])
-        sensor_configs = [
-            ("CPU", [
-                ("CPU.PERCENTAGE", "Load", ["u", "nu", "r"]),
-                ("CPU.TEMPERATURE", "Temp", ["u", "nu", "r"]),
-                ("CPU.FREQUENCY", "Freq", ["u", "nu", "r"]),
-            ]),
-            ("GPU", [
-                ("GPU.PERCENTAGE", "Load", ["u", "nu", "r"]),
-                ("GPU.TEMPERATURE", "Temp", ["u", "nu", "r"]),
-                ("GPU.MEMORY.PERCENTAGE", "Mem%", ["u", "nu", "r"]),
-                ("GPU.FPS", "FPS", ["u", "r"]),
-            ]),
-            ("RAM", [
-                ("MEMORY.VIRTUAL.PERCENTAGE", "Virt%", ["u", "nu", "r"]),
-                ("MEMORY.VIRTUAL.USED", "Used", ["u", "nu", "r"]),
-                ("MEMORY.SWAP.PERCENTAGE", "Swap%", ["u", "nu", "r"]),
-            ]),
-            ("Disk", [
-                ("DISK.PERCENTAGE", "Use%", ["u", "nu", "r"]),
-                ("DISK.USED", "Used", ["u", "nu", "r"]),
-                ("DISK.FREE", "Free", ["u", "nu", "r"]),
-            ]),
-            ("Net", [
-                ("NET.DOWNLOAD.RATE", "Down", ["u", "nu", "r"]),
-                ("NET.UPLOAD.RATE", "Up", ["u", "nu", "r"]),
-            ]),
-            ("Date", [
-                ("DATE.DAY", "Day", ["short", "medium", "long", "full"]),
-                ("DATE.HOUR", "Time", ["short", "medium", "long", "full"]),
-            ]),
-            ("Sys", [
-                ("UPTIME", "Uptime", ["FORMATTED", "SECONDS"]),
-                ("WEATHER.TEMPERATURE", "Weather", ["u", "nu"]),
-            ]),
-        ]
-        
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setMaximumHeight(200)
-        sensors_container = QWidget()
-        sensors_layout = QVBoxLayout(sensors_container)
-        sensors_layout.setContentsMargins(0, 0, 0, 0)
-        sensors_layout.setSpacing(2)
-        
-        for category, list_items in sensor_configs:
-            cat_group = QWidget()
-            cat_vbox = QVBoxLayout(cat_group)
-            cat_vbox.setContentsMargins(0, 5, 0, 2)
-            cat_vbox.setSpacing(1)
-            
-            cat_title = QLabel(category)
-            cat_title.setStyleSheet("font-weight: bold; color: #AAA; font-size: 9px;")
-            cat_vbox.addWidget(cat_title)
-            
-            for sensor_id, label, flags in list_items:
-                btn_row = QHBoxLayout()
-                btn_row.setSpacing(2)
-                
-                label_lbl = QLabel(label)
-                label_lbl.setFixedWidth(40)
-                label_lbl.setStyleSheet("color: #888; font-size: 9px;")
-                btn_row.addWidget(label_lbl)
-                
-                for flag in flags:
-                    btn = QPushButton(flag)
-                    btn.setToolTip(f"Insert {{{sensor_id}:{flag}}}")
-                    btn.setFixedHeight(18)
-                    btn.setStyleSheet("font-size: 8px; padding: 1px 2px; min-width: 35px;")
-                    
-                    # Tooltip check for UPTIME special case
-                    if sensor_id == "UPTIME" and flag == "FORMATTED":
-                         btn.setToolTip("{UPTIME:FORMATTED} (e.g. 2 days, 15:33)")
-                    
-                    def make_handler(sid, f):
-                        return lambda: self._insert_sensor(sid, f)
-                    btn.clicked.connect(make_handler(sensor_id, flag))
-                    btn_row.addWidget(btn)
-                
-                btn_row.addStretch()
-                cat_vbox.addLayout(btn_row)
-            
-            sensors_layout.addWidget(cat_group)
-        
-        sensors_layout.addStretch()
-        scroll_area.setWidget(sensors_container)
-        layout.addWidget(scroll_area)
-        
-        self._content_layout.addWidget(group)
-    
-    def _insert_sensor(self, sensor_id: str, flag: str = "u") -> None:
-        """Insert a sensor placeholder into the text field."""
+    def _insert_sensor_into_focused_widget(self, placeholder: str) -> None:
+        """Insert a sensor placeholder into the text field if it exists."""
         if "text" in self._widgets:
             text_edit = self._widgets["text"]
-            current = text_edit.text()
-            placeholder = f"{{{sensor_id}:{flag}}}"
-            # Insert at cursor position or end
-            cursor_pos = text_edit.cursorPosition()
-            new_text = current[:cursor_pos] + placeholder + current[cursor_pos:]
-            text_edit.setText(new_text)
-            text_edit.setCursorPosition(cursor_pos + len(placeholder))
-            text_edit.setFocus()
-    
-    def _pick_font(self) -> None:
-        """Open font picker dialog browsing res/fonts folder."""
-        from pathlib import Path
-        # Get res/fonts directory
-        fonts_dir = Path(__file__).parent.parent.parent / "res" / "fonts"
-        
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Choose Font",
-            str(fonts_dir),
-            "Font Files (*.ttf *.otf);;All Files (*)"
-        )
-        
-        if file_path:
-            # Convert to relative path from res/fonts
-            try:
-                rel_path = Path(file_path).relative_to(fonts_dir)
-                font_path = str(rel_path).replace("\\", "/")
-            except ValueError:
-                # File not under res/fonts, use absolute path
-                font_path = file_path
-            
-            self._on_property_changed("font", font_path)
-            if "font_label" in self._widgets:
-                self._widgets["font_label"].setText(font_path)
-    
+            if isinstance(text_edit, QLineEdit):
+                current = text_edit.text()
+                # Insert at cursor position or end
+                cursor_pos = text_edit.cursorPosition()
+                new_text = current[:cursor_pos] + placeholder + current[cursor_pos:]
+                text_edit.setText(new_text)
+                text_edit.setCursorPosition(cursor_pos + len(placeholder))
+                text_edit.setFocus()
+
     def _on_property_changed(self, prop_name: str, value: Any) -> None:
-        """Handle property value change."""
+        """Handle property value change and push to undo stack."""
         if self._updating or not self._current_element_id:
             return
-        
+            
         element = self._model.get_element(self._current_element_id)
         if not element:
             return
-
+            
         # Get old value for undo
         old_value = getattr(element, prop_name, None)
         if old_value == value:
@@ -1272,231 +206,6 @@ class PropertiesPanel(QWidget):
         from theme_editor.commands.undo_commands import ChangePropertyCommand
         cmd = ChangePropertyCommand(
             self._model, self._current_element_id, prop_name, old_value, value
-        )
-        self._undo_stack.push(cmd)
-        
-        # Signal is emitted by the model when property changes, which updates UI
-        # self.property_changed.emit(self._current_element_id, prop_name, value)
-    
-    def _on_shadow_enabled_toggled(self, checked: bool) -> None:
-        """Handle shadow enable/disable toggle."""
-        if self._updating or not self._current_element_id:
-            return
-        
-        element = self._model.get_element(self._current_element_id)
-        if not element:
-            return
-        
-        from theme_editor.commands.undo_commands import ChangePropertyCommand
-        
-        if checked:
-            # Create shadow with default values or from UI widgets if persistent
-            blur = self._widgets.get("shadow_blur")
-            color_btn = self._widgets.get("shadow_color")
-            offset_x = self._widgets.get("shadow_offset_x")
-            offset_y = self._widgets.get("shadow_offset_y")
-            
-            new_shadow = Shadow(
-                blur=blur.value() if blur else 5,
-                color=color_btn.color if color_btn else (0, 0, 0, 128),
-                offset_x=offset_x.value() if offset_x else 3,
-                offset_y=offset_y.value() if offset_y else 3
-            )
-            cmd = ChangePropertyCommand(
-                self._model, self._current_element_id, "shadow", None, new_shadow
-            )
-        else:
-            cmd = ChangePropertyCommand(
-                self._model, self._current_element_id, "shadow", element.shadow, None
-            )
-        
-        self._undo_stack.push(cmd)
-
-    def _on_property_changed(self, prop_name: str, value: Any) -> None:
-        """Handle generic property change."""
-        if self._updating or not self._current_element_id:
-            return
-            
-        element = self._model.get_element(self._current_element_id)
-        if not element:
-            return
-            
-        if hasattr(element, prop_name):
-            old_val = getattr(element, prop_name)
-            if old_val == value:
-                return
-            
-            from theme_editor.commands.undo_commands import ChangePropertyCommand
-            cmd = ChangePropertyCommand(
-                self._model, self._current_element_id, prop_name, old_val, value
-            )
-            self._undo_stack.push(cmd)
-
-    def _on_aspect_lock_toggled(self, checked: bool) -> None:
-        """Handle aspect ratio lock toggle."""
-        self._aspect_locked = checked
-        if checked and self._current_element_id:
-            # Recalculate aspect ratio based on current values
-            w_widget = self._widgets.get("width")
-            h_widget = self._widgets.get("height")
-            
-            if isinstance(w_widget, QSpinBox) and isinstance(h_widget, QSpinBox):
-                w = w_widget.value()
-                h = h_widget.value()
-                self._aspect_ratio = w / max(1, h)
-
-    def _on_width_changed(self, value: int) -> None:
-        """Handle width change with aspect ratio locking."""
-        if self._updating:
-            return
-            
-        self._on_property_changed("width", value)
-        
-        if self._aspect_locked and "height" in self._widgets:
-            self._updating = True
-            try:
-                new_h = int(value / self._aspect_ratio)
-                h_widget = self._widgets["height"]
-                if isinstance(h_widget, QSpinBox):
-                    h_widget.setValue(new_h)
-                    self._on_property_changed("height", new_h)
-            finally:
-                self._updating = False
-
-    def _on_height_changed(self, value: int) -> None:
-        """Handle height change with aspect ratio locking."""
-        if self._updating:
-            return
-            
-        self._on_property_changed("height", value)
-        
-        if self._aspect_locked and "width" in self._widgets:
-            self._updating = True
-            try:
-                new_w = int(value * self._aspect_ratio)
-                w_widget = self._widgets["width"]
-                if isinstance(w_widget, QSpinBox):
-                    w_widget.setValue(new_w)
-                    self._on_property_changed("width", new_w)
-            finally:
-                self._updating = False
-    
-    def _on_shadow_property_changed(self, prop_name: str, value: Any) -> None:
-        """Handle shadow property change."""
-        if self._updating or not self._current_element_id:
-            return
-        
-        element = self._model.get_element(self._current_element_id)
-        if hasattr(element, 'shadow') and element.shadow:
-            old_val = getattr(element.shadow, prop_name)
-            if old_val == value:
-                return
-                
-            from theme_editor.commands.undo_commands import ChangePropertyCommand
-            # For nested properties, we normally replace the whole object or use a specialized command.
-            # ChangePropertyCommand handles dot notation "shadow.blur"? 
-            # Implemented ChangePropertyCommand does NOT support nested attribute setting out of the box unless logic is added.
-            # Let's check ChangePropertyCommand implementation.
-            # Assuming ChangePropertyCommand uses setattr(element, prop, value).
-            # To support "shadow.blur", we might need to modify ChangePropertyCommand or use a clumsy workaround 
-            # where we clone the shadow object.
-            # Cloning is safer for immutable style record keeping.
-            
-            import copy
-            new_shadow = copy.copy(element.shadow)
-            setattr(new_shadow, prop_name, value)
-            
-            cmd = ChangePropertyCommand(
-                self._model, self._current_element_id, "shadow", element.shadow, new_shadow
-            )
-            self._undo_stack.push(cmd)
-    
-    def _on_outline_enabled_toggled(self, checked: bool) -> None:
-        """Handle outline enable/disable toggle."""
-        if self._updating or not self._current_element_id:
-            return
-        
-        element = self._model.get_element(self._current_element_id)
-        if not element:
-            return
-            
-        from theme_editor.commands.undo_commands import ChangePropertyCommand
-        
-        if checked:
-            width = self._widgets.get("outline_width")
-            color_btn = self._widgets.get("outline_color")
-            cap = self._widgets.get("outline_cap")
-            
-            new_outline = Outline(
-                width=width.value() if width else 1,
-                color=color_btn.color if color_btn else (255, 255, 255, 255),
-                cap=cap.currentText() if cap else "butt"
-            )
-            cmd = ChangePropertyCommand(
-                self._model, self._current_element_id, "outline", None, new_outline
-            )
-        else:
-            cmd = ChangePropertyCommand(
-                self._model, self._current_element_id, "outline", element.outline, None
-            )
-        
-        self._undo_stack.push(cmd)
-
-    def _on_outline_property_changed(self, prop_name: str, value: Any) -> None:
-        """Handle outline property change."""
-        if self._updating or not self._current_element_id:
-            return
-        
-        element = self._model.get_element(self._current_element_id)
-        if hasattr(element, 'outline') and element.outline:
-            old_val = getattr(element.outline, prop_name)
-            if old_val == value:
-                return
-
-            import copy
-            new_outline = copy.copy(element.outline)
-            setattr(new_outline, prop_name, value)
-            
-            from theme_editor.commands.undo_commands import ChangePropertyCommand
-            cmd = ChangePropertyCommand(
-                self._model, self._current_element_id, "outline", element.outline, new_outline
-            )
-            self._undo_stack.push(cmd)
-    
-    def _on_outline_dash_changed(self, text: str) -> None:
-        """Handle outline dash array change."""
-        if self._updating or not self._current_element_id:
-            return
-        
-        element = self._model.get_element(self._current_element_id)
-        if not element or not hasattr(element, 'outline') or not element.outline:
-            return
-            
-        # Parse logic
-        new_dash = None
-        try:
-            if text.strip():
-                values = []
-                for d in text.split(","):
-                    d_str = d.strip()
-                    if not d_str: continue
-                    val = float(d_str)
-                    if val.is_integer(): values.append(int(val))
-                    else: values.append(val)
-                new_dash = values
-        except ValueError:
-            return # Invalid
-            
-        old_dash = element.outline.dash_array
-        if old_dash == new_dash: return
-        
-        import copy
-        new_outline = copy.copy(element.outline)
-        new_outline.dash_array = new_dash
-        
-        from theme_editor.commands.undo_commands import ChangePropertyCommand
-        cmd = ChangePropertyCommand(
-            self._model, self._current_element_id, "outline", element.outline, new_outline
         )
         self._undo_stack.push(cmd)
     

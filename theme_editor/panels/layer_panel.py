@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QModelIndex, QPoint, QItemSelection, QEvent
 from PyQt6.QtGui import QUndoStack, QPainter
+from theme_editor.models.editor_state import EditorState
 from theme_editor.models.theme_model import ThemeModel
 from theme_editor.models.element import (
     ElementType, BackgroundImageElement, BackgroundVideoElement
@@ -131,14 +132,16 @@ class LayerPanel(QWidget):
     
     def __init__(
         self,
-        model: ThemeModel,
+        editor_state: EditorState,
+        theme_model: ThemeModel,
         undo_stack: QUndoStack,
         parent: Optional[QWidget] = None
     ):
         super().__init__(parent)
         self.setMinimumWidth(300)
         
-        self._model = model
+        self._editor_state = editor_state
+        self._model = theme_model
         self._undo_stack = undo_stack
         self._updating_selection = False
         
@@ -238,9 +241,12 @@ class LayerPanel(QWidget):
         selection_model = self._tree_view.selectionModel()
         if selection_model:
             selection_model.selectionChanged.connect(self._on_selection_changed)
+            
+        # Connect to central store
+        self._editor_state.selection_changed.connect(self.select_elements)
     
     def _on_selection_changed(self) -> None:
-        """Handle tree view selection change."""
+        """Handle tree view selection change and update central store."""
         if self._updating_selection:
             return
             
@@ -250,6 +256,9 @@ class LayerPanel(QWidget):
             for idx in indexes
             if idx.data(ThemeModel.ElementIdRole)
         ]
+        
+        # Update central store
+        self._editor_state.set_selection(element_ids, source='layer')
         self.selection_changed.emit(element_ids)
     
     def select_elements(self, element_ids: List[str]) -> None:

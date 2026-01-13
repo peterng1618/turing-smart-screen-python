@@ -1,12 +1,14 @@
 import pytest
 from PyQt6.QtGui import QUndoStack
+from theme_editor.models.editor_state import EditorState
 from theme_editor.models.theme_model import ThemeModel
 from theme_editor.models.element import ElementType, create_element
 
 @pytest.fixture
 def theme_model():
     stack = QUndoStack()
-    model = ThemeModel(stack)
+    state = EditorState(stack)
+    model = ThemeModel(state)
     return model
 
 def test_duplicate_element(theme_model):
@@ -21,7 +23,7 @@ def test_duplicate_element(theme_model):
     
     # Verify structure
     new_parent = theme_model.get_element(new_parent_id)
-    assert new_parent.name == "Parent"
+    assert new_parent.name == "Parent (Copy)"
     assert len(new_parent.children) == 1
     
     new_child_id = new_parent.children[0]

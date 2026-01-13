@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 from PyQt6.QtGui import QUndoStack
 from PyQt6.QtCore import Qt
 
+from theme_editor.models.editor_state import EditorState
 from theme_editor.models.theme_model import ThemeModel
 from theme_editor.models.element import (
     ElementType, create_element
@@ -20,8 +21,12 @@ def undo_stack():
     return MagicMock(spec=QUndoStack)
 
 @pytest.fixture
-def model(undo_stack):
-    m = ThemeModel(undo_stack)
+def editor_state(undo_stack):
+    return EditorState(undo_stack)
+
+@pytest.fixture
+def model(editor_state):
+    m = ThemeModel(editor_state)
     m.create_new("test_advanced")
     return m
 

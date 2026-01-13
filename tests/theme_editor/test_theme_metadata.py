@@ -2,13 +2,15 @@
 import unittest
 from PyQt6.QtGui import QUndoStack
 
+from theme_editor.models.editor_state import EditorState
 from theme_editor.models.theme_model import ThemeModel
 from theme_editor.models.element import ElementType, ThemeInfoElement
 
 class TestThemeMetadata(unittest.TestCase):
     def setUp(self):
         self.undo_stack = QUndoStack()
-        self.model = ThemeModel(self.undo_stack)
+        self.state = EditorState(self.undo_stack)
+        self.model = ThemeModel(self.state)
 
     def test_create_new_theme_structure(self):
         """Verify new theme creation has Theme Info and Background layers as roots."""
@@ -56,7 +58,8 @@ class TestThemeMetadata(unittest.TestCase):
         self.assertNotIn("theme_info", types)
         
         # Load back
-        new_model = ThemeModel(QUndoStack())
+        new_state = EditorState(QUndoStack())
+        new_model = ThemeModel(new_state)
         new_model.load_from_data(data)
         
         new_roots = new_model.get_root_elements()

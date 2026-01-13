@@ -25,6 +25,7 @@ from theme_editor.panels.layer_panel import LayerPanel
 from theme_editor.panels.properties_panel import PropertiesPanel
 from theme_editor.panels.tool_panel import ToolPanel
 from theme_editor.canvas.preview_canvas import PreviewCanvas
+from theme_editor.models.editor_state import EditorState
 from theme_editor.models.theme_model import ThemeModel
 from theme_editor.models.element import (
     ElementType, create_element, BackgroundImageElement, BackgroundVideoElement
@@ -74,12 +75,13 @@ class MainWindow(QMainWindow):
         else:
             logging.basicConfig(level=logging.INFO)
         
-        # Initialize undo stack
-        self._undo_stack = QUndoStack(self)
+        # Initialize EditorState (Single Source of Truth)
+        self._editor_state = EditorState(parent=self)
+        self._undo_stack = self._editor_state.undo_stack
         self._undo_stack.cleanChanged.connect(self._on_clean_changed)
         
-        # Initialize model
-        self._theme_model = ThemeModel(self._undo_stack)
+        # Initialize ThemeModel (ViewModel Projection)
+        self._theme_model = ThemeModel(self._editor_state)
         
         # Setup UI
         self._setup_window()
@@ -105,15 +107,12 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 600)
         self.resize(self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
         
-        # Selection debounce timer
-        self._selection_timer = QTimer(self)
-        self._selection_timer.setSingleShot(True)
-        self._selection_timer.setInterval(100)  # 100ms debounce
-        self._selection_timer.timeout.connect(self._process_selection_change)
-        self._pending_selection_ids = []
-        self._pending_selection_source = None
-        
         # Enable window state saving
+        self.setDockOptions(
+            QMainWindow.DockOption.AllowNestedDocks |
+            QMainWindow.DockOption.AllowTabbedDocks |
+            QMainWindow.DockOption.AnimatedDocks
+        )
         self.setDockOptions(
             QMainWindow.DockOption.AllowNestedDocks |
             QMainWindow.DockOption.AllowTabbedDocks |
@@ -355,7 +354,7 @@ class MainWindow(QMainWindow):
     def _create_panels(self) -> None:
         """Create the dockable panels and central widget."""
         # Create central canvas
-        self._canvas = PreviewCanvas(self._theme_model, self._undo_stack)
+        self._canvas = PreviewCanvas(self._editor_state, self._theme_model, self._undo_stack)
         self.setCentralWidget(self._canvas)
         
         # Create tool panel (default left)
@@ -368,7 +367,7 @@ class MainWindow(QMainWindow):
         self._panels_menu.insertAction(self.action_restore_layout, self._tool_dock.toggleViewAction())
         
         # Create properties panel (default top-right)
-        self._properties_panel = PropertiesPanel(self._theme_model, self._undo_stack)
+        self._properties_panel = PropertiesPanel(self._editor_state, self._theme_model, self._undo_stack)
         self._props_dock = QDockWidget("Properties", self)
         self._props_dock.setObjectName("PropertiesDock")
         self._props_dock.setWidget(self._properties_panel)
@@ -377,7 +376,7 @@ class MainWindow(QMainWindow):
         self._panels_menu.insertAction(self.action_restore_layout, self._props_dock.toggleViewAction())
         
         # Create layer panel (default bottom-right)
-        self._layer_panel = LayerPanel(self._theme_model, self._undo_stack)
+        self._layer_panel = LayerPanel(self._editor_state, self._theme_model, self._undo_stack)
         self._layer_dock = QDockWidget("Layers", self)
         self._layer_dock.setObjectName("LayersDock")
         self._layer_dock.setWidget(self._layer_panel)
@@ -392,9 +391,7 @@ class MainWindow(QMainWindow):
         # Connect signals
         self._tool_panel.add_element_requested.connect(self._on_tool_requested)
         self._tool_panel.theme_toggle_requested.connect(self._toggle_app_theme)
-        self._canvas.selection_changed.connect(self._on_canvas_selection_changed)
         self._canvas.mouse_moved.connect(self._on_canvas_mouse_moved)
-        self._layer_panel.selection_changed.connect(self._on_layer_selection_changed)
     
     def _create_status_bar(self) -> None:
         """Create the status bar."""
@@ -1095,63 +1092,6 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage("Layout restored")
     
     # --- Selection Sync ---
-    
-    _syncing_selection = False  # Guard against recursion
-    
-    def _process_selection_change(self) -> None:
-        """Actually process the selection change after debounce."""
-        if not self._pending_selection_ids:
-            # Clear properties
-            self._properties_panel.clear()
-            if self._pending_selection_source == 'canvas':
-                self._layer_panel.select_elements([])
-            elif self._pending_selection_source == 'layer':
-                self._canvas.select_elements([])
-            return
-            
-        element_ids = self._pending_selection_ids
-        source = self._pending_selection_source
-        
-        if self._syncing_selection:
-            return
-            
-        self._syncing_selection = True
-        try:
-            if source == 'layer':
-                # Layer panel changed -> Update Canvas
-                self._canvas.select_elements(element_ids)
-            elif source == 'canvas':
-                # Canvas changed -> Update Layer Panel
-                self._layer_panel.select_elements(element_ids)
-            
-            # Update Properties Panel (common for both)
-            # Handle multi-select in properties?
-            # Currently properties panel likely only supports single selection
-            # We'll show the first one for now
-            if element_ids:
-                # If multiple, maybe show "Multiple Selection" or just first?
-                # For now, first one.
-                self._properties_panel.show_properties(element_ids[0])
-            else:
-                self._properties_panel.clear()
-        finally:
-            self._syncing_selection = False
-
-    def _on_layer_selection_changed(self, element_ids: list) -> None:
-        """Handle layer panel selection change with debounce."""
-        if self._syncing_selection:
-            return
-        self._pending_selection_ids = element_ids
-        self._pending_selection_source = 'layer'
-        self._selection_timer.start()
-    
-    def _on_canvas_selection_changed(self, element_ids: list) -> None:
-        """Handle canvas selection change with debounce."""
-        if self._syncing_selection:
-            return
-        self._pending_selection_ids = element_ids
-        self._pending_selection_source = 'canvas'
-        self._selection_timer.start()
     
     # --- Help ---
     

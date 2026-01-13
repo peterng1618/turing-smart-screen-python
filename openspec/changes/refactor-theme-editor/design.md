@@ -37,20 +37,20 @@ We will refactor the existing `ThemeModel` (a `QAbstractItemModel`) to be a **Vi
 5. **UI Refresh**: All panels (Layer, Properties, Canvas) listen to these signals and update their display.
 
 
-### 3. Modularization Strategy
+### 4. Handling Locked Elements
+The Unified Store makes the "Locked" vs "Selectable" distinction much cleaner:
 
-#### PropertiesPanel
-Instead of one massive file, we will use a registry of property editors:
-- `PropertiesPanel` (Main Container)
-- `BasePropertySection` (Abstract base)
-- `TransformSection`, `AppearanceSection`, `TypographySection`, `ShadowSection`, `OutlineSection` (Modular files in `theme_editor/panels/properties/`)
+- **Canvas Interaction**: When a user clicks the canvas, the `Canvas` component queries `EditorState` to see if the element at that position is `locked`. If locked, the `Canvas` simply **does not** trigger a selection change.
+- **Layer Panel Interaction**: When a user clicks a row in the `LayerPanel`, it **always** updates `EditorState.selection`.
+- **Observer Logic (Selection Box)**:
+    - The `Canvas` observes `EditorState.selection`.
+    - For each selected ID, it checks if `element.locked == True`.
+    - If locked: It shows a "Locked" selection box (e.g., dotted lines, no resize handles).
+    - If NOT locked: It shows the standard transform handles.
+- **Observer Logic (Properties)**:
+    - The `PropertiesPanel` observes `EditorState.selection` and always shows the properties, allowing the user to unlock the element or edit values even when canvas interaction is blocked.
 
-#### MainWindow
-Decompose into:
-- `theme_editor/ui/main_window.py`: Entry point and layout.
-- `theme_editor/ui/actions.py`: QAction definitions and management.
-- `theme_editor/ui/menus.py`: Menu bar construction.
-- `theme_editor/controllers/theme_controller.py`: High-level operations (New, Open, Save, Bake).
+### 5. Modularization Strategy
 
 ## Testing Plan
 - **Unit Tests**: Test the `EditorState` logic in isolation (selection logic, multi-select behavior).

@@ -25,9 +25,10 @@ from PyQt6.QtCore import Qt, pyqtSignal, QRectF, QPointF, QEvent, QModelIndex
 from PyQt6.QtGui import (
     QUndoStack, QPainter, QPen, QBrush, QColor, QPixmap,
     QWheelEvent, QMouseEvent, QKeyEvent, QTransform, QFont, QPaintEvent,
-    QFontDatabase, QFontMetrics
+    QFontDatabase, QFontMetrics, QSyntaxHighlighter, QTextCharFormat
 )
 
+from theme_editor.models.editor_state import EditorState
 from theme_editor.models.theme_model import ThemeModel
 from theme_editor.models.element import (
     Element, ElementType, BackgroundImageElement, BackgroundVideoElement
@@ -35,8 +36,9 @@ from theme_editor.models.element import (
 from theme_editor.commands.undo_commands import (
     MoveElementCommand, ChangePropertiesCommand
 )
-
-from PyQt6.QtGui import QSyntaxHighlighter, QTextCharFormat
+from theme_editor.utils.geometry import (
+    calculate_rotation, get_anchor_point, scale_point, calculate_snapped_line_end
+)
 
 logger = logging.getLogger(__name__)
 
@@ -482,18 +484,70 @@ class ElementItem(QGraphicsObject):
         self.update_from_element()
 
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value):
-        """Handle position change to sync with element properties."""
+        """Handle position change to sync with element properties and support snapping."""
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.scene():
+            if getattr(self, '_is_updating_geometry', False):
+                return value
+            
+            # Smart Snapping Logic
             new_pos = value
-            old_pos = self.pos()
-            dx = new_pos.x() - old_pos.x()
-            dy = new_pos.y() - old_pos.y()
+            current_pos = self.pos()
+            dx_move = new_pos.x() - current_pos.x()
+            dy_move = new_pos.y() - current_pos.y()
+            
+            # Snap thresholds
+            GUIDE_THRESHOLD = 20
+            GRID_THRESHOLD = 5
+            GRID_SIZE = 10
+            
+            # --- X-axis Snapping ---
+            if abs(dx_move) > 0.001:
+                is_moving_right = dx_move > 0
+                leading_x = new_pos.x() + (self.rect().width() if is_moving_right else 0)
+                snapped_x = None
+                
+                # Check Guides (Priority 1)
+                for g_v in self._model.guides_v:
+                    if abs(g_v - leading_x) < GUIDE_THRESHOLD:
+                        snapped_x = g_v - (self.rect().width() if is_moving_right else 0)
+                        break
+                
+                # Check Grid (Priority 2)
+                if snapped_x is None:
+                    nearest_grid = round(leading_x / GRID_SIZE) * GRID_SIZE
+                    if abs(nearest_grid - leading_x) < GRID_THRESHOLD:
+                        snapped_x = nearest_grid - (self.rect().width() if is_moving_right else 0)
+                
+                if snapped_x is not None:
+                    new_pos.setX(snapped_x)
+            
+            # --- Y-axis Snapping ---
+            if abs(dy_move) > 0.001:
+                is_moving_down = dy_move > 0
+                leading_y = new_pos.y() + (self.rect().height() if is_moving_down else 0)
+                snapped_y = None
+                
+                # Check Guides (Priority 1)
+                for g_h in self._model.guides_h:
+                    if abs(g_h - leading_y) < GUIDE_THRESHOLD:
+                        snapped_y = g_h - (self.rect().height() if is_moving_down else 0)
+                        break
+                
+                # Check Grid (Priority 2)
+                if snapped_y is None:
+                    nearest_grid = round(leading_y / GRID_SIZE) * GRID_SIZE
+                    if abs(nearest_grid - leading_y) < GRID_THRESHOLD:
+                        snapped_y = nearest_grid - (self.rect().height() if is_moving_down else 0)
+                
+                if snapped_y is not None:
+                    new_pos.setY(snapped_y)
             
             # Sync element's absolute coordinates via Model
+            # Recalculate deliberate dx/dy after snapping
+            dx = new_pos.x() - current_pos.x()
+            dy = new_pos.y() - current_pos.y()
+
             if self._element.element_type == ElementType.TRIANGLE:
-                 # Calculate new values
-                 # Notes: Triangle uses x1..y3, not x/y directly for positioning
-                 # We must update all points relative to the move
                  new_x1 = self._element.x1 + int(dx)
                  new_y1 = self._element.y1 + int(dy)
                  new_x2 = self._element.x2 + int(dx)
@@ -501,9 +555,6 @@ class ElementItem(QGraphicsObject):
                  new_x3 = self._element.x3 + int(dx)
                  new_y3 = self._element.y3 + int(dy)
                  
-                 # Setup block signals or batch update if possible, but for now serial calls or batching
-                 # The model doesn't have a batch update yet, so we call individually
-                 # To prevent jitter, we could suppress updates or rely on Qt's coalescing
                  self._model.set_element_property(self._element.id, "x1", new_x1)
                  self._model.set_element_property(self._element.id, "y1", new_y1)
                  self._model.set_element_property(self._element.id, "x2", new_x2)
@@ -512,7 +563,6 @@ class ElementItem(QGraphicsObject):
                  self._model.set_element_property(self._element.id, "y3", new_y3)
 
             elif self._element.element_type == ElementType.LINE:
-                 # Line uses x,y and x2,y2
                  new_x = self._element.x + int(dx)
                  new_y = self._element.y + int(dy)
                  new_x2 = self._element.x2 + int(dx)
@@ -522,14 +572,11 @@ class ElementItem(QGraphicsObject):
                  self._model.set_element_property(self._element.id, "y", new_y)
                  self._model.set_element_property(self._element.id, "x2", new_x2)
                  self._model.set_element_property(self._element.id, "y2", new_y2)
-
             else:
-                # Standard element uses x,y
-                new_x = int(new_pos.x())
-                new_y = int(new_pos.y())
-                # Use move_element for semantic clarity and potential optimization
-                self._model.move_element(self._element.id, new_x, new_y)
+                self._model.move_element(self._element.id, int(new_pos.x()), int(new_pos.y()))
                 
+            return new_pos
+
         return super().itemChange(change, value)
 
     def rect(self):
@@ -612,6 +659,8 @@ class ElementItem(QGraphicsObject):
         elem_type = self._element.element_type
         
         if elem_type == ElementType.TRIANGLE:
+            # IMPORTANT: For hit testing, points must be in LOCAL coordinates.
+            # Triangle points are stored as absolute scene coordinates.
             pos = self.pos()
             p1 = QPointF(self._element.x1 - pos.x(), self._element.y1 - pos.y())
             p2 = QPointF(self._element.x2 - pos.x(), self._element.y2 - pos.y())
@@ -646,6 +695,7 @@ class ElementItem(QGraphicsObject):
                     path.addRect(handle_rect)
         
         return path
+
     
     def _get_element_color(self):
         """Get element color as QColor."""
@@ -664,19 +714,6 @@ class ElementItem(QGraphicsObject):
             pen.setWidthF(1.0)
         return pen
     
-    def _get_anchor_point(self, handle: str) -> tuple[float, float]:
-        """Get the scene coordinates of the anchor point opposite to the handle."""
-        # Use starting rect to ensure anchor remains fixed during the entire resize
-        rect = self.mapToScene(self._resize_start_rect).boundingRect()
-        if handle == 'tl': return rect.right(), rect.bottom()
-        if handle == 'tr': return rect.left(), rect.bottom()
-        if handle == 'bl': return rect.right(), rect.top()
-        if handle == 'br': return rect.left(), rect.top()
-        if handle == 't': return rect.center().x(), rect.bottom()
-        if handle == 'b': return rect.center().x(), rect.top()
-        if handle == 'l': return rect.right(), rect.center().y()
-        if handle == 'r': return rect.left(), rect.center().y()
-        return rect.center().x(), rect.center().y()
 
     def _update_appearance(self) -> None:
         """Update visual appearance based on element type."""
@@ -1091,6 +1128,7 @@ class ElementItem(QGraphicsObject):
                 self._resize_handle = 'rot'
                 self._rotate_center = self.rect().center()
                 self._rotate_start_angle = self.rotation()
+                self._resize_start_pos = event.pos()
                 event.accept()
                 return
             elif handle:
@@ -1132,24 +1170,13 @@ class ElementItem(QGraphicsObject):
         """Handle mouse move for resizing/rotating."""
         # print("DEBUG: ElementItem.mouseMoveEvent start")
         if self._rotating:
-            # Calculate rotation angle from center
-            import math
-            center = self._rotate_center
-            start_vec = self._resize_start_pos - center
-            curr_vec = event.pos() - center
-            
-            # Calculate angles
-            start_angle = math.atan2(start_vec.y(), start_vec.x())
-            curr_angle = math.atan2(curr_vec.y(), curr_vec.x())
-            
-            # Delta in degrees
-            delta_degrees = math.degrees(curr_angle - start_angle)
-            new_rotation = self._rotate_start_angle + delta_degrees
-            
-            # Snap to 15 degree increments if Shift held
-            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                new_rotation = round(new_rotation / 15) * 15
-            
+            new_rotation = calculate_rotation(
+                center=self._rotate_center,
+                start_pos=self._resize_start_pos,
+                current_pos=event.pos(),
+                start_angle=self._rotate_start_angle,
+                snap=bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            )
             self.setRotation(new_rotation)
             self.update()
             event.accept()
@@ -1196,26 +1223,15 @@ class ElementItem(QGraphicsObject):
             # 2. Handle specific element types with the new rect
             if self._element.element_type == ElementType.LINE:
                 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                    import math
                     # Snap to 5-degree increments relative to the other point
                     other_p = QPointF(self._element.x2, self._element.y2) if handle == 'start' else QPointF(self._element.x, self._element.y)
-                    curr_p = event.scenePos()
-                    diff = curr_p - other_p
-                    dist = math.sqrt(diff.x()**2 + diff.y()**2)
-                    if dist > 0.1:
-                        angle_rad = math.atan2(diff.y(), diff.x())
-                        angle_deg = math.degrees(angle_rad)
-                        snapped_deg = round(angle_deg / 5) * 5
-                        snapped_rad = math.radians(snapped_deg)
-                        
-                        new_x = int(other_p.x() + dist * math.cos(snapped_rad))
-                        new_y = int(other_p.y() + dist * math.sin(snapped_rad))
-                        
-                        if handle == 'start':
-                            self._model.move_element(self._element.id, new_x, new_y)
-                        else:
-                            self._model.set_element_property(self._element.id, "x2", new_x)
-                            self._model.set_element_property(self._element.id, "y2", new_y)
+                    new_x, new_y = calculate_snapped_line_end(other_p, event.scenePos())
+                    
+                    if handle == 'start':
+                        self._model.move_element(self._element.id, new_x, new_y)
+                    else:
+                        self._model.set_element_property(self._element.id, "x2", new_x)
+                        self._model.set_element_property(self._element.id, "y2", new_y)
                 else:
                     # Line uses scene delta for start/end handles directly
                     delta_scene = event.scenePos() - event.lastScenePos()
@@ -1249,13 +1265,12 @@ class ElementItem(QGraphicsObject):
                     
                     # Update element points based on scaling from anchor
                     # Anchor is the corner opposite to the dragged handle
-                    anchor_x, anchor_y = self._get_anchor_point(handle)
+                    anchor_x, anchor_y = get_anchor_point(old_rect, handle)
+                    anchor = (anchor_x, anchor_y)
                     
-                    self._element.x1 = int(anchor_x + (self._resize_start_pts[0][0] - anchor_x) * scale_x)
-                    self._element.y1 = int(anchor_y + (self._resize_start_pts[0][1] - anchor_y) * scale_y)
-                    self._element.x2 = int(anchor_x + (self._resize_start_pts[1][0] - anchor_x) * scale_x)
-                    self._element.y2 = int(anchor_y + (self._resize_start_pts[1][1] - anchor_y) * scale_y)
-                    self._element.y3 = int(anchor_y + (self._resize_start_pts[2][1] - anchor_y) * scale_y)
+                    self._element.x1, self._element.y1 = scale_point(self._resize_start_pts[0], anchor, scale_x, scale_y)
+                    self._element.x2, self._element.y2 = scale_point(self._resize_start_pts[1], anchor, scale_x, scale_y)
+                    self._element.x3, self._element.y3 = scale_point(self._resize_start_pts[2], anchor, scale_x, scale_y)
 
                 # Update via Model
                 self._model.set_element_property(self._element.id, "x1", self._element.x1)
@@ -1685,107 +1700,7 @@ class ElementItem(QGraphicsObject):
                 # Draw resize handles as rectangles
                 painter.drawRect(handle_rect)
     
-    def itemChange(self, change, value):
-        """Handle item changes for position updates and snapping."""
-        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
-            # Smart Snapping Logic
-            new_pos = value
-            current_pos = self.pos()
-            dx = new_pos.x() - current_pos.x()
-            dy = new_pos.y() - current_pos.y()
-            
-            # Snap thresholds
-            GUIDE_THRESHOLD = 20
-            GRID_THRESHOLD = 5
-            GRID_SIZE = 10
-            
-            # --- X-axis Snapping ---
-            if abs(dx) > 0.001:  # Ensure we have motion
-                # Moving right: snap RIGHT edge. Moving left: snap LEFT edge.
-                is_moving_right = dx > 0
-                leading_x = new_pos.x() + (self.rect().width() if is_moving_right else 0)
-                
-                snapped_x = None
-                
-                # 1. Check Guides (Priority 1)
-                for g_v in self._model.guides_v:
-                    if abs(g_v - leading_x) < GUIDE_THRESHOLD:
-                        snapped_x = g_v - (self.rect().width() if is_moving_right else 0)
-                        break
-                
-                # 2. Check Grid (Priority 2)
-                if snapped_x is None:
-                    nearest_grid = round(leading_x / GRID_SIZE) * GRID_SIZE
-                    if abs(nearest_grid - leading_x) < GRID_THRESHOLD:
-                        snapped_x = nearest_grid - (self.rect().width() if is_moving_right else 0)
-                
-                if snapped_x is not None:
-                    new_pos.setX(snapped_x)
-            
-            # --- Y-axis Snapping ---
-            if abs(dy) > 0.001:
-                # Moving down: snap BOTTOM edge. Moving up: snap TOP edge.
-                is_moving_down = dy > 0
-                leading_y = new_pos.y() + (self.rect().height() if is_moving_down else 0)
-                
-                snapped_y = None
-                
-                # 1. Check Guides (Priority 1)
-                for g_h in self._model.guides_h:
-                    if abs(g_h - leading_y) < GUIDE_THRESHOLD:
-                        snapped_y = g_h - (self.rect().height() if is_moving_down else 0)
-                        break
-                
-                # 2. Check Grid (Priority 2)
-                if snapped_y is None:
-                    nearest_grid = round(leading_y / GRID_SIZE) * GRID_SIZE
-                    if abs(nearest_grid - leading_y) < GRID_THRESHOLD:
-                        snapped_y = nearest_grid - (self.rect().height() if is_moving_down else 0)
-                
-                if snapped_y is not None:
-                    new_pos.setY(snapped_y)
-            
-            return new_pos
-            
-        elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
-            # Update element position with support for coordinate-based items
-            if self._is_updating_geometry:
-                return value
-                
-            new_pos = value
-            # We need to know the old position to calculate delta
-            # Since we just moved, self.pos() IS the new position (value)
-            # We should have stored the last position
-            old_pos = getattr(self, '_last_stored_pos', new_pos)
-            dx = int(new_pos.x()) - int(old_pos.x())
-            dy = int(new_pos.y()) - int(old_pos.y())
-            
-            # Apply delta to extra points (Triangle, Line)
-            elem_type = self._element.element_type
-            if dx != 0 or dy != 0:
-                if elem_type == ElementType.TRIANGLE:
-                    self._element.x1 += dx
-                    self._element.y1 += dy
-                    self._element.x2 += dx
-                    self._element.y2 += dy
-                    self._element.x3 += dx
-                    self._element.y3 += dy
-                elif elem_type == ElementType.LINE:
-                    self._element.x += dx
-                    self._element.y += dy
-                    self._element.x2 += dx
-                    self._element.y2 += dy
-                else:
-                    self._element.x = int(new_pos.x())
-                    self._element.y = int(new_pos.y())
-                    
-            self._last_stored_pos = new_pos
-        elif change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
-            self._update_appearance()
-            self.update()  # Trigger repaint
-        
-        # Return value - base class behavior is to return value unchanged
-        return value
+
     
     def _load_image_pixmap(self, image_path: str) -> None:
         """Load and cache a pixmap from the image path."""
@@ -2000,7 +1915,8 @@ class PreviewCanvas(QWidget):
     
     def __init__(
         self,
-        model: ThemeModel,
+        editor_state: EditorState,
+        theme_model: ThemeModel,
         undo_stack: QUndoStack,
         parent: Optional[QWidget] = None
     ):
@@ -2008,13 +1924,15 @@ class PreviewCanvas(QWidget):
         Initialize the preview canvas.
         
         Args:
-            model: Theme data model
+            editor_state: Central state store
+            theme_model: Theme data model (projection)
             undo_stack: Undo stack for operations
             parent: Parent widget
         """
         super().__init__(parent)
         
-        self._model = model
+        self._editor_state = editor_state
+        self._model = theme_model
         self._undo_stack = undo_stack
         
         self._zoom_level = 1.0
@@ -2217,6 +2135,9 @@ class PreviewCanvas(QWidget):
         
         # Connect scene selection changes
         self._scene.selectionChanged.connect(self._on_scene_selection_changed)
+        
+        # Connect to central store
+        self._editor_state.selection_changed.connect(self._on_store_selection_changed)
     
     def _update_scene_rect(self) -> None:
         """Update scene rectangle based on display size."""
@@ -2370,7 +2291,11 @@ class PreviewCanvas(QWidget):
         """Handle element moved in model."""
         item = self._element_items.get(element_id)
         if item:
-            item.setPos(new_x, new_y)
+            item._is_updating_geometry = True
+            try:
+                item.setPos(new_x, new_y)
+            finally:
+                item._is_updating_geometry = False
     
     def _on_model_layout_changed(self) -> None:
         """Handle model layout change (e.g., elements removed)."""
@@ -2383,10 +2308,8 @@ class PreviewCanvas(QWidget):
                     self._scene.removeItem(item)
     
     def _on_scene_selection_changed(self) -> None:
-        """Handle scene selection change."""
-        print("DEBUG: PreviewCanvas._on_scene_selection_changed")
+        """Handle scene selection change and update central store."""
         if self._block_selection_signal:
-            print("DEBUG: Ignoring signal due to block")
             return
             
         try:
@@ -2395,11 +2318,27 @@ class PreviewCanvas(QWidget):
                 for item in self._scene.selectedItems()
                 if isinstance(item, ElementItem)
             ]
-            print(f"DEBUG: Emitting selection_changed with {len(selected_ids)} items")
+            
+            # Update central store
+            # We don't need to emit a local signal anymore, but we can if legacy code needs it
+            self._editor_state.set_selection(selected_ids, source='canvas')
             self.selection_changed.emit(selected_ids)
         except RuntimeError:
-            # Scene may be deleted during application close
             pass
+
+    def _on_store_selection_changed(self, element_ids: List[str]) -> None:
+        """Update scene selection when central store changes."""
+        if self._block_selection_signal:
+            return
+            
+        self._block_selection_signal = True
+        try:
+            self._scene.clearSelection()
+            for eid in element_ids:
+                if eid in self._element_items:
+                    self._element_items[eid].setSelected(True)
+        finally:
+            self._block_selection_signal = False
     
     # --- Selection ---
     
@@ -2494,15 +2433,7 @@ class PreviewCanvas(QWidget):
         self._show_guides = visible
         self._refresh_canvas()
     
-    def add_guide_h(self, y: int) -> None:
-        """Add horizontal guide at y position."""
-        if y not in self._model.guides_h:
-            self._model.set_guides(self._model.guides_h + [y], self._model.guides_v)
-    
-    def add_guide_v(self, x: int) -> None:
-        """Add vertical guide at x position."""
-        if x not in self._model.guides_v:
-            self._model.set_guides(self._model.guides_h, self._model.guides_v + [x])
+
     
     def _refresh_canvas(self) -> None:
         """Refresh the entire canvas."""
