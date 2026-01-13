@@ -38,21 +38,23 @@ We will refactor the existing `ThemeModel` (a `QAbstractItemModel`) to be a **Vi
 
 
 ### 4. Handling Locked Elements
-The Unified Store makes the "Locked" vs "Selectable" distinction much cleaner:
+(Implemented)
+- **Canvas Interaction**: `PreviewCanvas` queries `EditorState` to determine selectability. 
+- **Layer Panel**: Always allows selection via `EditorState.set_selection`.
+- **Observer Logic**: `PreviewCanvas` and `PropertiesPanel` synchronize purely by observing `EditorState` signals.
 
-- **Canvas Interaction**: When a user clicks the canvas, the `Canvas` component queries `EditorState` to see if the element at that position is `locked`. If locked, the `Canvas` simply **does not** trigger a selection change.
-- **Layer Panel Interaction**: When a user clicks a row in the `LayerPanel`, it **always** updates `EditorState.selection`.
-- **Observer Logic (Selection Box)**:
-    - The `Canvas` observes `EditorState.selection`.
-    - For each selected ID, it checks if `element.locked == True`.
-    - If locked: It shows a "Locked" selection box (e.g., dotted lines, no resize handles).
-    - If NOT locked: It shows the standard transform handles.
-- **Observer Logic (Properties)**:
-    - The `PropertiesPanel` observes `EditorState.selection` and always shows the properties, allowing the user to unlock the element or edit values even when canvas interaction is blocked.
+### 5. Recursion Stability (Re-entrancy Guard)
+To prevent circular signal loops between the canvas and the model (e.g., `itemChange` -> `model.move_element` -> `on_element_moved` -> `item.setPos`), an `_is_updating_geometry` flag was implemented in `ElementItem`:
+- **Guard Logic**: The flag is set before any programmatic `setPos` or property updates and cleared afterwards.
+- **Verification**: Standalone reproduction scripts and unit tests verified that this prevents `RecursionError` while maintaining synchronization.
 
-### 5. Modularization Strategy
+### 6. Modularization Strategy
+(Implemented)
+- **PropertySection Registry**: Maps `ElementType` to a dynamic list of `PropertySection` classes.
+- **Decoupled Sections**: Sections like `SensorSection`, `BackgroundSection`, and `AppearanceSection` are now independently initialized and managed.
 
 ## Testing Plan
-- **Unit Tests**: Test the `EditorState` logic in isolation (selection logic, multi-select behavior).
-- **Integration Tests**: Verify that updating selection in the `Store` correctly propagates to all panels without looping.
-- **Regression Tests**: Ensure existing `UndoCommand` tests still pass with the new model.
+(Executed)
+- **Unit Tests**: `test_editor_state.py` (Selection, state persistence).
+- **Integration Tests**: `test_selection_integration.py` (Cross-component sync), `test_properties_modularity.py` (Dynamic sections).
+- **Functional Tests**: `test_hit_testing.py` (Triangle/Line geometry verification).

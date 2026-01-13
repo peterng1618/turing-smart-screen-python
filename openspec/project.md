@@ -56,8 +56,10 @@ This fork specifically focuses on:
 ### Testing Strategy
 - Tests located in `tests/` directory.
 - `repro_*.py` scripts used for reproducing specific issues.
-- Integration tests for UI logic (e.g., `test_theme_save.py`).
-
+- Integration tests for application logic (e.g., `test_theme_save.py`).
+- Integration tests are always run before implementation and updated to reflect the new behavior and kept for future testing.
+- Test outputs are always logged to files under tests/logs/ directory and the agent will always read from this directory.
+ 
 ### Git Workflow
 - Standard feature-branch workflow.
 

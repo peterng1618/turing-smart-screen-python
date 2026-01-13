@@ -8,16 +8,16 @@ The current Theme Editor architecture has evolved organically, resulting in seve
 - **Limited Test Coverage**: While core undo commands are tested, higher-level interaction logic and panel state management lack comprehensive coverage.
 
 ## What Changes
-- **Unified State Store**: Reclaim the lost role of `ThemeModel` by replacing/encapsulating it within a comprehensive `EditorState`. This "Store" will be the single source of truth for both the theme document and the ephemeral UI state (selection, tools, view settings), eliminating "state chasing" across the app.
+- **Unified State Store**: Implemented `EditorState` as the Single Source of Truth for both persistent document data and ephemeral UI state (selection, guides, zoom).
 - **Architecture Refactoring**:
-    - Split `MainWindow` into smaller, focused components (e.g., `ActionsManager`, `PanelManager`, `StatusBarController`).
-    - Modularize `PropertiesPanel` by breaking it down into specialized property sections (Transform, Appearance, Typography, etc.) that can be independently developed and tested.
-    - Standardize on a strict MVC/Mediator pattern where panels only communicate via the central `EditorState`.
-- **Improved PyQt Patterns**: Use more robust signal/slot connections and avoid direct cross-component references where possible.
-- **Enhanced Test Suite**:
-    - Implement tests for the new `EditorState` logic.
-    - Add integration tests for selection synchronization and property updates.
-    - Ensure 100% coverage for all application logic.
+    - **View Model Projection**: Refactored `ThemeModel` to act as a projection of `EditorState`, maintaining compatibility with `QAbstractItemModel` consumers.
+    - **Modular Properties**: Decomposed `PropertiesPanel` into specialized, pluggable `PropertySection` components.
+    - **Geometry Centralization**: Extracted complex geometry/snapping logic from `PreviewCanvas` to `theme_editor/utils/geometry.py`.
+- **Improved Qt Patterns**: 
+    - Eliminated "state chasing" by using a uni-directional selection flow (Component -> Store -> Signal -> All Components).
+    - Reduced oversized files and addressed duplication in `PreviewCanvas`.
+- **Enhanced Verification**:
+    - Established a comprehensive test suite in `tests/theme_editor/` covering store integrity, selection sync, and hit-testing.
 
 ## Impact
 - **Affected specs**: `theme-editor` (Modified architectural requirements)
