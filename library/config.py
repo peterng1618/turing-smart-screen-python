@@ -48,7 +48,7 @@ def copy_default(default, theme):
     for k, v in default.items():
         if k not in theme:
             theme[k] = v
-        if type(v) == type({}):
+        if type(v) == type({}):  # noqa: E721
             copy_default(default[k], theme[k])
 
 
@@ -59,11 +59,11 @@ def load_theme():
         logger.info("Loading theme %s from %s" % (CONFIG_DATA['config']['THEME'], theme_path / "theme.yaml"))
         THEME_DATA = load_yaml(MAIN_DIRECTORY / theme_path / "theme.yaml")
         THEME_DATA['PATH'] = str(MAIN_DIRECTORY / theme_path) + "/"
-    except:
+    except:  # noqa: E722
         logger.error("Theme not found or contains errors!")
         try:
             sys.exit(0)
-        except:
+        except:  # noqa: E722
             os._exit(0)
 
     copy_default(THEME_DEFAULT, THEME_DATA)
@@ -76,7 +76,7 @@ def check_theme_compatible(display_size: str):
             'THEME'] + " is not compatible with your display revision " + CONFIG_DATA["display"]["REVISION"])
         try:
             sys.exit(0)
-        except:
+        except:  # noqa: E722
             os._exit(0)
 
 

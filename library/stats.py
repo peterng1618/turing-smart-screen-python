@@ -63,7 +63,7 @@ elif HW_SENSORS == "LHM":
         logger.error("LibreHardwareMonitor integration is only available on Windows")
         try:
             sys.exit(0)
-        except:
+        except:  # noqa: E722
             os._exit(0)
 elif HW_SENSORS == "STUB":
     logger.warning("Stub sensors, not real HW sensors")
@@ -80,7 +80,7 @@ else:
     logger.error("Unsupported HW_SENSORS value in config.yaml")
     try:
         sys.exit(0)
-    except:
+    except:  # noqa: E722
         os._exit(0)
 
 import library.sensors.sensors_custom as sensors_custom
@@ -783,7 +783,7 @@ class Date:
                 lc_time = locale.getdefaultlocale()[0]
             else:
                 lc_time = babel.dates.LC_TIME
-        except:
+        except:  # noqa: E722
             lc_time = None
 
         if not lc_time:
@@ -1034,7 +1034,7 @@ class DynamicText:
                             b_locale = locale.getlocale()[0]
                             try:
                                 value = babel.dates.format_datetime(dt, format=flag, locale=b_locale)
-                            except:
+                            except:  # noqa: E722
                                 value = babel.dates.format_datetime(dt, format=flag, locale='en')
                         else:
                             value = dt.strftime(flag)

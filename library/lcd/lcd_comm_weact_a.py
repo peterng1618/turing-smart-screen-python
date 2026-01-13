@@ -51,7 +51,7 @@ class LcdCommWeActA(LcdComm):
         for com_port in com_ports:
             if com_port.vid == 0x1a86 and com_port.pid == 0xfe0c:
                 return com_port.device
-            if type(com_port.serial_number) == str:
+            if type(com_port.serial_number) == str:  # noqa: E721
                 if com_port.serial_number.startswith("AB"):
                     return com_port.device
 
@@ -198,11 +198,11 @@ class LcdCommWeActA(LcdComm):
         if self.lcd_serial.in_waiting > 0:
             cmd = self.ReadData(1)
             if (
-                cmd != None
+                cmd != None  # noqa: E711
                 and cmd[0] == Command.CMD_ENABLE_HUMITURE_REPORT | Command.CMD_READ
             ):
                 data = self.ReadData(5)
-                if data != None and len(data) == 5 and data[4] == Command.CMD_END:
+                if data != None and len(data) == 5 and data[4] == Command.CMD_END:  # noqa: E711
                     unpack = struct.unpack("<Hh", data[0:4])
                     self.temperature = float(unpack[0]) / 100
                     self.humidness = float(unpack[1]) / 100

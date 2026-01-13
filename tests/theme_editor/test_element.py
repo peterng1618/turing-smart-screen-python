@@ -6,8 +6,7 @@ Unit tests for theme_editor.models.element module.
 import pytest
 from theme_editor.models.element import (
     Element, ElementType, Shadow, Outline,
-    RectangleElement, CircleElement, TriangleElement, LineElement,
-    TextElement, ImageElement, IconElement, GroupElement, DynamicTextElement,
+    RectangleElement, CircleElement, TextElement, DynamicTextElement,
     create_element
 )
 

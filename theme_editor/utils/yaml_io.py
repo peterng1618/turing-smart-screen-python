@@ -17,7 +17,7 @@ from typing import Any, Dict, Optional
 
 import yaml
 
-from PyQt6.QtCore import QTemporaryFile, QIODevice
+from PyQt6.QtCore import QTemporaryFile
 
 logger = logging.getLogger(__name__)
 
@@ -138,11 +138,9 @@ class ThemeYamlIO:
         
         # Handle video background (v1)
         video_bg = v1.get("video_background", {})
-        eb_video = {
-            "type": "background_video",
-            "name": "Background Video",
-            "enabled": video_bg.get("ENABLE", False),
-            "source_path": video_bg.get("SOURCE_PATH", ""),
+        v2["video_background"] = {
+            "ENABLE": video_bg.get("ENABLE", False),
+            "SOURCE_PATH": video_bg.get("SOURCE_PATH", ""),
             "x": video_bg.get("x", 0),
             "y": video_bg.get("y", 0),
             "width": video_bg.get("width", 0),
@@ -151,10 +149,7 @@ class ThemeYamlIO:
             "start_offset": video_bg.get("START_OFFSET", "00:00"),
             "duration": video_bg.get("DURATION", ""),
             "loop_fade_duration": video_bg.get("LOOP_FADE_DURATION", 1.0),
-            "locked": True,
-            "z_order": -500
         }
-        v2["ui_elements"].append(eb_video)
         
         # Handle background image (v1)
         static_images = v1.get("static_images", {})
@@ -162,14 +157,14 @@ class ThemeYamlIO:
         if "BACKGROUND" in static_images:
             bg_path = static_images["BACKGROUND"].get("PATH", "background.png")
             
-        eb_img = {
-            "type": "background_image",
-            "name": "Background Image",
-            "path": bg_path,
-            "locked": True,
-            "z_order": -99
+        v2["static_images"] = {
+            "BACKGROUND": {
+                "PATH": bg_path,
+                "X": 0, "Y": 0, "WIDTH": 800, "HEIGHT": 480 # Defaults, overridden by model display size usually
+            }
         }
-        v2["ui_elements"].append(eb_img)
+        if "BACKGROUND" in static_images:
+             v2["static_images"]["BACKGROUND"].update(static_images["BACKGROUND"])
         
         # Convert static_images to ui_elements (except BACKGROUND)
         for name, img_data in v1.get("static_images", {}).items():
@@ -445,7 +440,7 @@ class ThemeYamlIO:
             # Backup original if exists
             backup_path = None
             if target_path.exists():
-                logger.info(f"Target exists, creating backup...")
+                logger.info("Target exists, creating backup...")
                 backup_path = target_path.with_suffix(target_path.suffix + ".bak")
                 # Remove old backup if exists
                 if backup_path.exists():
@@ -488,7 +483,7 @@ class ThemeYamlIO:
             if 'temp_path' in locals() and temp_path.exists():
                  try:
                      temp_path.unlink()
-                 except: pass
+                 except: pass  # noqa: E722
 
             raise e
     

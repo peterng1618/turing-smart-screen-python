@@ -108,7 +108,7 @@ if __name__ == "__main__":
         logger.error("Unknown revision")
         try:
             sys.exit(1)
-        except:
+        except:  # noqa: E722
             os._exit(1)
 
     # Reset screen in case it was in an unstable state (screen is also cleared)

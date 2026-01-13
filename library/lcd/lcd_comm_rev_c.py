@@ -194,7 +194,7 @@ class LcdCommRevC(LcdComm):
 
             if LcdCommRevC._get_awake_com_port(comports()) is not None:
                 time.sleep(1)
-                logger.debug(f"Detected screen turned ON")
+                logger.debug("Detected screen turned ON")
                 return
 
             time.sleep(1)
@@ -268,7 +268,7 @@ class LcdCommRevC(LcdComm):
             if self.rom_version < 80 or self.rom_version > 100:
                 logger.warning("ROM version %d may be invalid, use default ROM version 87" % self.rom_version)
                 self.rom_version = 87
-        except:
+        except:  # noqa: E722
             logger.warning("Display returned invalid or unsupported ID, use default ROM version 87")
             self.rom_version = 87
 

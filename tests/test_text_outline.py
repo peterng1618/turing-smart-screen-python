@@ -16,7 +16,7 @@ else:
     app = QApplication.instance()
 
 from theme_editor.models.theme_model import ThemeModel
-from theme_editor.models.element import create_element, ElementType, Outline
+from theme_editor.models.element import create_element, ElementType
 from theme_editor.panels.properties_panel import PropertiesPanel
 
 class TestTextOutline(unittest.TestCase):

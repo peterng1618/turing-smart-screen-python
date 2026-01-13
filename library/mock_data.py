@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import library.config as config
-import datetime
 
 class MockDataProvider:
     """Provides mock sensor data for the theme editor preview."""
@@ -94,11 +93,13 @@ class MockDataProvider:
              if "_VIRTUAL_" in k:
                  dot_key = k.replace("_VIRTUAL_", ".VIRTUAL.")
                  config.STATS_VALUES[dot_key] = config.STATS_VALUES[k]
-                 config.STATS_RAW[dot_key] = stats_raw[k]
+                 if k in stats_raw:
+                     config.STATS_RAW[dot_key] = stats_raw[k]
              if "_SWAP_" in k:
                  dot_key = k.replace("_SWAP_", ".SWAP.")
                  config.STATS_VALUES[dot_key] = config.STATS_VALUES[k]
-                 config.STATS_RAW[dot_key] = stats_raw[k]
+                 if k in stats_raw:
+                     config.STATS_RAW[dot_key] = stats_raw[k]
 
         # Ensure UPTIME.SECONDS_RAW etc match the expected format
         for k, v in stats_raw.items():

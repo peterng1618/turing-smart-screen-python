@@ -37,7 +37,7 @@ if ctypes.windll.shell32.IsUserAnAdmin() == 0:
     print("Program is not running as administrator. Please run again with admin rights.")
     try:
         sys.exit(0)
-    except:
+    except:  # noqa: E722
         os._exit(0)
 
 handle = Hardware.Computer()

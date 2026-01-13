@@ -13,19 +13,17 @@ It extends QAbstractItemModel to work seamlessly with Qt's model/view framework.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from PyQt6.QtCore import (
     QAbstractItemModel, QModelIndex, Qt, QMimeData,
-    pyqtSignal, QByteArray
+    pyqtSignal
 )
 from PyQt6.QtGui import QUndoStack
 
 from theme_editor.models.element import (
     Element, ElementType, create_element,
-    RectangleElement, CircleElement, TriangleElement, LineElement,
-    TextElement, ImageElement, IconElement, GroupElement, DynamicTextElement,
-    BackgroundImageElement, BackgroundVideoElement, ThemeInfoElement
+    TriangleElement, BackgroundImageElement, BackgroundVideoElement, ThemeInfoElement
 )
 
 logger = logging.getLogger(__name__)
@@ -260,7 +258,7 @@ class ThemeModel(QAbstractItemModel):
             Qt.ItemFlag.ItemIsEnabled |
             Qt.ItemFlag.ItemIsSelectable |
             Qt.ItemFlag.ItemIsEditable |
-            Qt.ItemFlag.ItemIsUserCheckable |
+            # Qt.ItemFlag.ItemIsUserCheckable |  # Removed as per UI requirement
             Qt.ItemFlag.ItemIsDragEnabled |
             Qt.ItemFlag.ItemIsDropEnabled
         )
@@ -316,8 +314,76 @@ class ThemeModel(QAbstractItemModel):
         
         element_ids = data.data("application/x-themeeditor-element").data().decode().split(",")
         
-        # TODO: Implement reordering via undo command
-        logger.debug(f"Drop: {element_ids} at row {row}, parent {parent.internalPointer() if parent.isValid() else 'root'}")
+        # Determine target parent
+        if parent.isValid():
+            target_parent_id = parent.internalPointer()
+        else:
+            target_parent_id = None
+            
+        # If row is -1, it means drop on the parent itself (append)
+        # But wait, QAbstractItemModel docs say row is -1 if dropped on parent.
+        if row == -1:
+            if target_parent_id:
+                # Append to end of children
+                target_element = self._elements.get(target_parent_id)
+                if target_element:
+                    row = len(target_element.children)
+            else:
+                # Append to end of root
+                row = len(self._root_ids)
+                
+        # Handle reordering via Undo Stack
+        from theme_editor.commands.undo_commands import ReorderElementCommand
+        
+        # We process moves sequentially.
+        # Note: If we move multiple items, pushed commands create multiple undo steps
+        # unless we wrap them in a macro.
+        
+        if len(element_ids) > 1:
+            self._undo_stack.beginMacro("Reorder Layers")
+            
+        current_row = row
+        for eid in element_ids:
+            # Calculate current index for this element to create the command
+            # The command logic takes (element_id, old_index, new_index)
+            # But wait, ReorderElementCommand expects indices within the SAME parent?
+            # Or does it handle reparenting?
+            # Looking at ReorderElementCommand: 
+            # It takes old_index, new_index. BUT it assumes parent is the SAME?
+            # 'ReorderElementCommand' implementation shows:
+            # self._model.get_element(self._element_id) ...
+            # it uses internal methods to remove and insert.
+            # But wait, the current Reorder implementation in undo_commands.py 
+            # assumes modifying the element's CURRENT parent's children list.
+            # It does NOT handle changing parents.
+            # We implemented 'reorder_element' in 'ThemeModel' which supports reparenting.
+            # But the 'ReorderElementCommand' class I read in undo_commands.py (lines 203+) 
+            # uses '_reorder' helper which just removes/inserts in current list.
+            # It does NOT support changing parent_id.
+            
+            # Correction: We need a 'ReparentElementCommand' or update 'ReorderElementCommand'
+            # to support target_parent.
+            # Actually, drag and drop OFTEN changes parents (grouping).
+            # So I should implement a better command or use 'reorder_element' inside the command.
+            
+            # Let's assume we update ReorderElementCommand to call model.reorder_element
+            # taking (element_id, target_parent_id, target_row).
+            # That matches the method signature we added to ThemeModel.
+            
+            # I will push a command that calls 'model.reorder_element'.
+            # I need to update 'ReorderElementCommand' structure first?
+            # Yes, existing command is too simple.
+            
+            # For now, let's assume I WILL update ReorderElementCommand shortly.
+            # I'll create the command call assuming the new signature.
+            
+            self._undo_stack.push(ReorderElementCommand(
+                self, eid, target_parent_id, current_row
+            ))
+            current_row += 1
+            
+        if len(element_ids) > 1:
+            self._undo_stack.endMacro()
         
         return True
     
@@ -591,6 +657,318 @@ class ThemeModel(QAbstractItemModel):
         self.endResetModel()
         logger.debug("Model cleared")
     
+    def duplicate_element(self, element_id: str) -> Optional[str]:
+        """
+        Duplicate an element and its children.
+        
+        Args:
+            element_id: ID of element to duplicate
+            
+        Returns:
+            ID of new element, or None if failed
+        """
+        source = self._elements.get(element_id)
+        if not source:
+            return None
+            
+        # 1. Deep copy the element structure
+        import copy
+        new_element = copy.deepcopy(source)
+        
+        # 2. Assign new IDs recursively
+        # We need to map old IDs to new IDs to fix parent/child relationships
+        id_map = {}
+        
+        def _reassign_ids(elem):
+            import uuid
+            old_id = elem.id
+            new_id = str(uuid.uuid4())
+            elem.id = new_id
+            id_map[old_id] = new_id
+            
+            # Recurse for children
+            if hasattr(elem, 'children'):
+                # We iterate over a copy because we'll replace the list content
+                # But wait, deepcopy already copied the list. 
+                # The children IN the list are strings (IDs).
+                pass
+            
+            return new_id
+
+        # Pass 1: Assign new IDs and build map
+        # We need to traverse the *new* structure. 
+        # Since deepcopy copied the objects, we can modify them in place.
+        # But we need to traverse recursively.
+        
+        # Helper to traverse object graph
+        def _traverse_and_remap(elem):
+            import uuid
+            old_id = elem.id # deepcopy kept the old ID
+            new_id = str(uuid.uuid4())
+            elem.id = new_id
+            
+            # Register in model
+            # But wait, we can't register yet/here easily if we want to be clean.
+            # Let's just fix up IDs first.
+            
+            # Process children
+            if hasattr(elem, 'children'):
+                new_children_ids = []
+                # Retrieve children objects? No, deepcopy didn't copy children if they are just ID strings in a list.
+                # The 'children' attribute is a list of Strings.
+                # So deepcopy gave us a new LIST of the SAME Strings.
+                # We need to find the source objects for those children, deep copy them too?
+                # Ah, 'children' in Element is list[str]. 
+                # So deepcopy(source) only copied the source element, NOT its children elements (which are separate objects in self._elements).
+                pass
+        
+        # Re-think: deepcopy(source) is shallow regarding the tree if children are just IDs.
+        # We need to manually deep copy the tree.
+        
+        def _clone_tree(src_elem) -> Element:
+            # Clone attributes
+            import copy
+            new_elem = copy.deepcopy(src_elem)
+            
+            # Generate new ID
+            import uuid
+            new_elem.id = str(uuid.uuid4())
+            
+            # Clear children list (it contains old IDs)
+            if hasattr(new_elem, 'children'):
+                new_elem.children = []
+                
+                # Clone children recursively
+                if hasattr(src_elem, 'children'):
+                    for child_id in src_elem.children:
+                        child_src = self._elements.get(child_id)
+                        if child_src:
+                            child_clone = _clone_tree(child_src)
+                            child_clone.parent_id = new_elem.id
+                            new_elem.children.append(child_clone.id)
+                            # Store in temp dict until we are ready to add to model
+                            cloned_elements[child_clone.id] = child_clone
+            
+            return new_elem
+
+        cloned_elements = {} # To hold all new objects
+        new_root = _clone_tree(source)
+        cloned_elements[new_root.id] = new_root
+        
+        # 3. Add to model
+        # Modify name to indicate copy
+        new_root.name = f"{new_root.name} (Copy)"
+        
+        # Determine insertion point (after original)
+        parent_id = source.parent_id
+        index = -1
+        
+        if parent_id:
+            parent = self._elements.get(parent_id)
+            if parent and source.id in parent.children:
+                index = parent.children.index(source.id) + 1
+        else:
+            if source.id in self._root_ids:
+                index = self._root_ids.index(source.id) + 1
+        
+        # Bulk add to _elements dict
+        self._elements.update(cloned_elements)
+        
+        # Signal the addition of the root (and children implicit?)
+        # Standard add_element expects to handle insertion logic.
+        # Let's use add_element for the root, but we need to ensure children are handled.
+        # Since we manually added children to the new_root.children list and self._elements,
+        # we just need to hook new_root into the parent.
+        
+        if parent_id:
+            parent_elem = self._elements.get(parent_id)
+            parent_index = self._get_index_for_element(parent_id)
+            
+            self.beginInsertRows(parent_model_index, index, index)
+            parent_elem.children.insert(index, new_root.id)
+            self.endInsertRows()
+        else:
+            self.beginInsertRows(QModelIndex(), index, index)
+            self._root_ids.insert(index, new_root.id)
+            self.endInsertRows()
+            
+        # We should emit element_added for all new elements so views/guides can update
+        for cid, _ in cloned_elements.items():
+            self.element_added.emit(cid)
+            
+        return new_root.id
+
+    def reorder_element(self, element_id: str, target_parent_id: Optional[str], row: int) -> bool:
+        """
+        Move an element to a new position in the tree.
+        
+        Args:
+            element_id: ID of element to move
+            target_parent_id: New parent ID (None for root)
+            row: Target row index (desired final index in the list)
+            
+        Returns:
+            True if moved
+        """
+        element = self._elements.get(element_id)
+        if not element:
+            return False
+            
+        # 1. Remove from old location
+        old_parent_id = element.parent_id
+        
+        # Prevent moving into itself
+        if target_parent_id == element_id:
+            return False
+            
+        # Prevent moving into a descendant
+        if target_parent_id:
+            descendants = self.get_all_children_ids(element_id)
+            if target_parent_id in descendants:
+                return False
+        
+        if old_parent_id:
+            old_parent = self._elements.get(old_parent_id)
+            if not old_parent or element_id not in old_parent.children:
+                return False
+            
+            old_row = old_parent.children.index(element_id)
+            source_parent_index = self._get_index_for_element(old_parent_id)
+        else:
+            if element_id not in self._root_ids:
+                return False
+            old_row = self._root_ids.index(element_id)
+            source_parent_index = QModelIndex()
+        
+        # Calculate destination for Qt beginMoveRows
+        
+        dest_list_len = 0
+        if target_parent_id:
+            target_parent = self._elements.get(target_parent_id)
+            if not target_parent:
+                return False
+            dest_parent_index = self._get_index_for_element(target_parent_id)
+            dest_list_len = len(target_parent.children)
+        else:
+            target_parent = None
+            dest_parent_index = QModelIndex()
+            dest_list_len = len(self._root_ids)
+
+        # Qt Signal Row Calculation
+        qt_dest_row = row
+        if old_parent_id == target_parent_id:
+            # Moving within same list
+            if row > old_row:
+                # If target is after source, Qt expects index+1 (insertion point if not removed)
+                qt_dest_row = row + 1
+        
+        # Clamp qt_dest_row for safety with beginMoveRows
+        # Note: Qt allows appending, so index == rowCount is valid
+        # Logic above handles standard cases.
+        
+        if not self.beginMoveRows(source_parent_index, old_row, old_row, dest_parent_index, qt_dest_row):
+             return False
+             
+        # Execute Move on Data
+        if old_parent_id:
+            self._elements[old_parent_id].children.pop(old_row)
+        else:
+            self._root_ids.pop(old_row)
+            
+        # Insert at desired final index
+        # Since we popped, indices shifted. 
+        # But list.insert(i, x) inserts before i. 
+        # If we want final index 'row', we just insert at 'row'.
+        
+        if target_parent_id:
+            # Bounds check for list insertion
+            if row > len(target_parent.children):
+                target_parent.children.append(element_id)
+            else:
+                target_parent.children.insert(row, element_id)
+        else:
+            if row > len(self._root_ids):
+                self._root_ids.append(element_id)
+            else:
+                self._root_ids.insert(row, element_id)
+            
+        element.parent_id = target_parent_id
+        
+        self.endMoveRows()
+        return True
+
+    def remove_element_tree(self, root_id: str) -> None:
+        """
+        Remove an element and its entire subtree from the model structure (UI),
+        but keep the objects alive if referenced elsewhere (like by UndoCommand).
+        """
+        self.remove_element(root_id)
+
+    def restore_element_tree(
+        self, 
+        element_map: Dict[str, Element], 
+        root_id: str, 
+        parent_id: Optional[str], 
+        index: int
+    ) -> None:
+        """
+        Restore a previously removed tree of elements.
+        
+        Args:
+            element_map: Dict of all elements in the tree (id -> Element)
+            root_id: ID of the root of the tree to re-attach
+            parent_id: ID of the parent to attach to
+            index: Index to insert at
+        """
+        if not element_map or not root_id:
+            return
+
+        # 1. Restore all elements to the internal dict
+        self._elements.update(element_map)
+        
+        # 2. Re-attach root to hierarchy
+        root_element = self._elements.get(root_id)
+        if not root_element:
+            return
+            
+        # Determine parent index and list
+        if parent_id:
+            parent = self._elements.get(parent_id)
+            if not parent:
+                # Parent gone? Fallback to root
+                parent_id = None
+                parent_model_index = QModelIndex()
+                current_list = self._root_ids
+            else:
+                parent_model_index = self._get_index_for_element(parent_id)
+                current_list = parent.children
+        else:
+            parent_model_index = QModelIndex()
+            current_list = self._root_ids
+            
+        insert_row = len(current_list) if index < 0 else index
+        
+        self.beginInsertRows(parent_model_index, insert_row, insert_row)
+        
+        # We assume child-parent links inside the tree are preserved in 'element_map' objects
+        # We only need to link the root
+        root_element.parent_id = parent_id
+        
+        if parent_id:
+            parent = self._elements.get(parent_id)
+            if index < 0:
+                parent.children.append(root_id)
+            else:
+                parent.children.insert(index, root_id)
+        else:
+            current_list.insert(insert_row, root_id)
+            
+        self.endInsertRows()
+        
+        # Emit added signals for everything
+        for eid in element_map:
+            self.element_added.emit(eid)
+
     def create_new(self, name: str) -> None:
         """
         Create a new theme with default structure.
@@ -1044,3 +1422,139 @@ class ThemeModel(QAbstractItemModel):
         self._guides_h = sorted(list(set(horizontal)))
         self._guides_v = sorted(list(set(vertical)))
         self.guides_changed.emit()
+
+    def duplicate_element(self, element_id: str) -> Optional[str]:
+        """
+        Duplicate an element and its children.
+        
+        Args:
+            element_id: ID of element to duplicate
+            
+        Returns:
+            ID of the new element, or None if failed
+        """
+        element = self.get_element(element_id)
+        if not element:
+            return None
+            
+        # Helper to recursively copy
+        def copy_recursive(elem: Element, parent_id: Optional[str]) -> Element:
+            import copy
+            
+            # Manual copy of properties
+            props = elem.__dict__.copy()
+            # Remove identity fields
+            props.pop('id', None)
+            props.pop('parent_id', None)
+            props.pop('children', None)
+            
+            # Deep copy mutable properties
+            props = copy.deepcopy(props)
+            
+            new_elem = create_element(elem.element_type, **props)
+            
+            # Add to model
+            self.add_element(new_elem, parent_id)
+            
+            # Recurse children
+            for child_id in elem.children:
+                child = self.get_element(child_id)
+                if child:
+                    copy_recursive(child, new_elem.id)
+                    
+            return new_elem
+
+        # Duplicate
+        new_root = copy_recursive(element, element.parent_id)
+        
+        # Append " (Copy)" to the root name to differentiate
+        if hasattr(new_root, 'name'):
+            new_root.name = f"{new_root.name} (Copy)"
+        
+        self.layoutChanged.emit()
+        return new_root.id
+
+    def remove_element_tree(self, root_id: str) -> Dict[str, Element]:
+        """
+        Remove an element and all its descendants, returning them as a map.
+        
+        Args:
+            root_id: ID of the root element to remove
+            
+        Returns:
+            Dictionary mapping element IDs to Element objects
+        """
+        removed_map = {}
+        
+        # Helper to collect and remove
+        def collect_remove(eid: str):
+            elem = self._elements.get(eid)
+            if not elem:
+                return
+            
+            # Recurse first
+            children_copy = list(elem.children)
+            for child_id in children_copy:
+                collect_remove(child_id)
+            
+            # Remove from model dict
+            if eid in self._elements:
+                removed_map[eid] = self._elements.pop(eid)
+                
+        # Main remove logic
+        if root_id not in self._elements:
+            return {}
+            
+        root = self._elements[root_id]
+        
+        # Detach from parent
+        if root.parent_id:
+            parent = self._elements.get(root.parent_id)
+            if parent and root_id in parent.children:
+                parent.children.remove(root_id)
+        elif root_id in self._root_ids:
+            self._root_ids.remove(root_id)
+            
+        # Collect and remove all from _elements
+        collect_remove(root_id)
+        
+        self.layoutChanged.emit()
+        self.element_removed.emit(root_id)
+        
+        return removed_map
+
+    def restore_element_tree(self, element_map: Dict[str, Element], root_id: str, parent_id: Optional[str], index: int) -> None:
+        """
+        Restore a previously removed tree of elements.
+        
+        Args:
+            element_map: Dictionary of {id: Element} to restore
+            root_id: ID of the root element in the map
+            parent_id: ID of the parent to attach to
+            index: Index to insert at (in parent's children or root list)
+        """
+        if not element_map or root_id not in element_map:
+            return
+            
+        # Put all elements back into dict
+        self._elements.update(element_map)
+        
+        # Re-attach root to parent
+        root = element_map[root_id]
+        root.parent_id = parent_id
+        
+        if parent_id:
+            parent = self._elements.get(parent_id)
+            if parent:
+                if index >= 0 and index <= len(parent.children):
+                    parent.children.insert(index, root_id)
+                else:
+                    parent.children.append(root_id)
+        else:
+            if index >= 0 and index <= len(self._root_ids):
+                self._root_ids.insert(index, root_id)
+            else:
+                self._root_ids.append(root_id)
+                
+        self.layoutChanged.emit()
+        self.element_added.emit(root_id)

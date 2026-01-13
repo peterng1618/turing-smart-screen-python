@@ -6,7 +6,6 @@ Defines the base Element class and all specific element types that can be
 used in themes (shapes, text, images, icons, sensors).
 """
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Dict, List, Optional, Tuple

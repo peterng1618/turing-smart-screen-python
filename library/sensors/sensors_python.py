@@ -39,13 +39,13 @@ from library.log import logger
 # AMD GPU on Linux
 try:
     import pyamdgpuinfo
-except:
+except:  # noqa: E722
     pyamdgpuinfo = None
 
 # AMD GPU on Windows
 try:
     import pyadl
-except:
+except:  # noqa: E722
     pyadl = None
 
 PNIC_BEFORE = {}
@@ -73,7 +73,9 @@ def sensors_fans():
     - lm-sensors on Ubuntu 16.04 relies on /sys/class/hwmon
     """
     from psutil._common import bcat, cat
-    import collections, glob, os
+    import collections
+    import glob
+    import os
 
     ret = collections.defaultdict(list)
     basenames = glob.glob('/sys/class/hwmon/hwmon*/fan*_*')
@@ -89,7 +91,7 @@ def sensors_fans():
 
             try:
                 max_rpm = int(bcat(base + '_max'))
-            except:
+            except:  # noqa: E722
                 max_rpm = False  # Real maximum speed not found
             if not max_rpm:
                 if current_rpm > 2200:
@@ -101,10 +103,10 @@ def sensors_fans():
 
             try:
                 min_rpm = int(bcat(base + '_min'))
-            except:
+            except:  # noqa: E722
                 min_rpm = 0  # Approximated: min fan speed is 0 RPM
             percent = int((current_rpm - min_rpm) / (max_rpm - min_rpm) * 100)
-        except (IOError, OSError) as err:
+        except (IOError, OSError):
             continue
         unit_name = cat(os.path.join(os.path.dirname(base), 'name')).strip()
         label = cat(base + '_label', fallback=os.path.basename(base)).strip()
@@ -124,21 +126,21 @@ class Cpu(sensors.Cpu):
     def percentage(interval: float) -> float:
         try:
             return psutil.cpu_percent(interval=interval)
-        except:
+        except:  # noqa: E722
             return math.nan
 
     @staticmethod
     def frequency() -> float:
         try:
             return psutil.cpu_freq().current
-        except:
+        except:  # noqa: E722
             return math.nan
 
     @staticmethod
     def load() -> Tuple[float, float, float]:  # 1 / 5 / 15min avg (%):
         try:
             return psutil.getloadavg()
-        except:
+        except:  # noqa: E722
             return math.nan, math.nan, math.nan
 
     @staticmethod
@@ -158,7 +160,7 @@ class Cpu(sensors.Cpu):
             elif 'zenpower' in sensors_temps:
                 # AMD CPU with zenpower (k10temp is in blacklist)
                 cpu_temp = sensors_temps['zenpower'][0].current
-        except:
+        except:  # noqa: E722
             # psutil.sensors_temperatures not available on Windows / MacOS
             pass
         return cpu_temp
@@ -176,7 +178,7 @@ class Cpu(sensors.Cpu):
                         elif is_cpu_fan(entry.label) or is_cpu_fan(name):
                             # Auto-detected fan
                             return entry.percent
-        except:
+        except:  # noqa: E722
             pass
 
         return math.nan
@@ -251,30 +253,30 @@ class GpuNvidia(sensors.Gpu):
         try:
             memory_used_all = [item.memoryUsed for item in nvidia_gpus]
             memory_used_mb = sum(memory_used_all) / len(memory_used_all)
-        except:
+        except:  # noqa: E722
             memory_used_mb = math.nan
 
         try:
             memory_total_all = [item.memoryTotal for item in nvidia_gpus]
             memory_total_mb = sum(memory_total_all) / len(memory_total_all)
-        except:
+        except:  # noqa: E722
             memory_total_mb = math.nan
 
         try:
             memory_percentage = (memory_used_mb / memory_total_mb) * 100
-        except:
+        except:  # noqa: E722
             memory_percentage = math.nan
 
         try:
             load_all = [item.load for item in nvidia_gpus]
             load = (sum(load_all) / len(load_all)) * 100
-        except:
+        except:  # noqa: E722
             load = math.nan
 
         try:
             temperature_all = [item.temperature for item in nvidia_gpus]
             temperature = sum(temperature_all) / len(temperature_all)
-        except:
+        except:  # noqa: E722
             temperature = math.nan
 
         return load, memory_percentage, memory_used_mb, memory_total_mb, temperature
@@ -293,7 +295,7 @@ class GpuNvidia(sensors.Gpu):
                     for entry in entries:
                         if "gpu" in (entry.label.lower() or name.lower()):
                             return entry.percent
-        except:
+        except:  # noqa: E722
             pass
 
         return math.nan
@@ -307,7 +309,7 @@ class GpuNvidia(sensors.Gpu):
     def is_available() -> bool:
         try:
             return len(GPUtil.getGPUs()) > 0
-        except:
+        except:  # noqa: E722
             return False
 
 
@@ -323,30 +325,30 @@ class GpuAmd(sensors.Gpu):
             try:
                 memory_used_bytes = amd_gpu.query_vram_usage()
                 memory_used = memory_used_bytes / 1024 / 1024
-            except:
+            except:  # noqa: E722
                 memory_used_bytes = math.nan
                 memory_used = math.nan
 
             try:
                 memory_total_bytes = amd_gpu.memory_info["vram_size"]
                 memory_total = memory_total_bytes / 1024 / 1024
-            except:
+            except:  # noqa: E722
                 memory_total_bytes = math.nan
                 memory_total = math.nan
 
             try:
                 memory_percentage = (memory_used_bytes / memory_total_bytes) * 100
-            except:
+            except:  # noqa: E722
                 memory_percentage = math.nan
 
             try:
                 load = amd_gpu.query_load() * 100
-            except:
+            except:  # noqa: E722
                 load = math.nan
 
             try:
                 temperature = amd_gpu.query_temperature()
-            except:
+            except:  # noqa: E722
                 temperature = math.nan
 
             return load, memory_percentage, memory_used, memory_total, temperature
@@ -355,12 +357,12 @@ class GpuAmd(sensors.Gpu):
 
             try:
                 load = amd_gpu.getCurrentUsage()
-            except:
+            except:  # noqa: E722
                 load = math.nan
 
             try:
                 temperature = amd_gpu.getCurrentTemperature()
-            except:
+            except:  # noqa: E722
                 temperature = math.nan
 
             # GPU memory data not supported by pyadl
@@ -386,7 +388,7 @@ class GpuAmd(sensors.Gpu):
             if pyadl:
                 return pyadl.ADLManager.getInstance().getDevices()[0].getCurrentFanSpeed(
                     pyadl.ADL_DEVICE_FAN_SPEED_TYPE_PERCENTAGE)
-        except:
+        except:  # noqa: E722
             pass
 
         return math.nan
@@ -401,7 +403,7 @@ class GpuAmd(sensors.Gpu):
                 return pyadl.ADLManager.getInstance().getDevices()[0].getCurrentEngineClock()
             else:
                 return math.nan
-        except:
+        except:  # noqa: E722
             return math.nan
 
     @staticmethod
@@ -413,7 +415,7 @@ class GpuAmd(sensors.Gpu):
                 return True
             else:
                 return False
-        except:
+        except:  # noqa: E722
             return False
 
 
@@ -422,14 +424,14 @@ class Memory(sensors.Memory):
     def swap_percent() -> float:
         try:
             return psutil.swap_memory().percent
-        except:
+        except:  # noqa: E722
             return math.nan
 
     @staticmethod
     def virtual_percent() -> float:
         try:
             return psutil.virtual_memory().percent
-        except:
+        except:  # noqa: E722
             return math.nan
 
     @staticmethod
@@ -438,7 +440,7 @@ class Memory(sensors.Memory):
             # Do not use psutil.virtual_memory().used: from https://psutil.readthedocs.io/en/latest/#memory
             # "It is calculated differently depending on the platform and designed for informational purposes only"
             return psutil.virtual_memory().total - psutil.virtual_memory().available
-        except:
+        except:  # noqa: E722
             return -1
 
     @staticmethod
@@ -447,7 +449,7 @@ class Memory(sensors.Memory):
             # Do not use psutil.virtual_memory().free: from https://psutil.readthedocs.io/en/latest/#memory
             # "note that this doesn’t reflect the actual memory available (use available instead)."
             return psutil.virtual_memory().available
-        except:
+        except:  # noqa: E722
             return -1
 
 
@@ -456,21 +458,21 @@ class Disk(sensors.Disk):
     def disk_usage_percent() -> float:
         try:
             return psutil.disk_usage("/").percent
-        except:
+        except:  # noqa: E722
             return math.nan
 
     @staticmethod
     def disk_used() -> int:  # In bytes
         try:
             return psutil.disk_usage("/").used
-        except:
+        except:  # noqa: E722
             return -1
 
     @staticmethod
     def disk_free() -> int:  # In bytes
         try:
             return psutil.disk_usage("/").free
-        except:
+        except:  # noqa: E722
             return -1
 
 
@@ -494,7 +496,7 @@ class Net(sensors.Net):
                         uploaded = pnic_after[if_name].bytes_sent
                         download_rate = (pnic_after[if_name].bytes_recv - PNIC_BEFORE[if_name].bytes_recv) / interval
                         downloaded = pnic_after[if_name].bytes_recv
-                    except:
+                    except:  # noqa: E722
                         # Interface might not be in PNIC_BEFORE for now
                         pass
 
@@ -503,5 +505,5 @@ class Net(sensors.Net):
                     logger.warning("Network interface '%s' not found. Check names in config.yaml." % if_name)
 
             return upload_rate, uploaded, download_rate, downloaded
-        except:
+        except:  # noqa: E722
             return -1, -1, -1, -1

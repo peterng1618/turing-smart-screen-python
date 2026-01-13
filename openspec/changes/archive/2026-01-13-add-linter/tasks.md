@@ -1,0 +1,4 @@
+- [x] 1.1 Add `ruff` to `requirements.txt`.
+- [x] 1.2 Create `pyproject.toml` with phased configuration (Global ignores + Per-directory overrides).
+- [x] 1.3 Run `ruff check .` to verify baseline (expecting passes on legacy, catch new bugs).
+- [x] 1.4 Update `openspec/project.md` with "Linting Philosophy".

@@ -21,7 +21,6 @@ import os
 import sys
 from pathlib import Path
 from fractions import Fraction
-import logging
 
 import av
 import numpy as np

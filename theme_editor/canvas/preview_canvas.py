@@ -13,17 +13,15 @@ Provides a QGraphicsView-based canvas for visual editing with:
 import logging
 import re
 import datetime
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 import library.config as config
 
 from PyQt6.QtWidgets import (
-    QGraphicsView, QGraphicsScene, QGraphicsItem, QGraphicsRectItem,
-    QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsTextItem,
-    QGraphicsPixmapItem, QGraphicsObject, QWidget, QVBoxLayout, QGridLayout, QFrame,
+    QGraphicsView, QGraphicsScene, QGraphicsItem, QGraphicsLineItem, QGraphicsObject, QWidget, QGridLayout, QFrame,
     QLineEdit, QTextEdit, QGraphicsDropShadowEffect
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QRectF, QPointF, QSizeF, QSize, QEvent
+from PyQt6.QtCore import Qt, pyqtSignal, QRectF, QPointF, QEvent, QModelIndex
 from PyQt6.QtGui import (
     QUndoStack, QPainter, QPen, QBrush, QColor, QPixmap,
     QWheelEvent, QMouseEvent, QKeyEvent, QTransform, QFont, QPaintEvent,
@@ -32,11 +30,10 @@ from PyQt6.QtGui import (
 
 from theme_editor.models.theme_model import ThemeModel
 from theme_editor.models.element import (
-    Element, ElementType, create_element,
-    BackgroundImageElement, BackgroundVideoElement
+    Element, ElementType, BackgroundImageElement, BackgroundVideoElement
 )
 from theme_editor.commands.undo_commands import (
-    MoveElementCommand, ChangePropertyCommand, ChangePropertiesCommand
+    MoveElementCommand, ChangePropertiesCommand
 )
 
 from PyQt6.QtGui import QSyntaxHighlighter, QTextCharFormat
@@ -571,8 +568,11 @@ class ElementItem(QGraphicsObject):
         self.setTransformOriginPoint(self.rect().center())
         
         # Enable selection and movement
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, not self._element.locked)
+        # Respect locked state
+        is_locked = self._element.locked
+        
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, not is_locked)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, not is_locked)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
         
         # Accept hover events for cursor changes
@@ -775,7 +775,7 @@ class ElementItem(QGraphicsObject):
                             pattern = flag.replace("yyyy", "%Y").replace("yy", "%y").replace("MM", "%m").replace("dd", "%d")
                             pattern = pattern.replace("HH", "%H").replace("mm", "%M").replace("ss", "%S").replace("zzz", "%Z")
                             value = now.strftime(pattern)
-                        except:
+                        except:  # noqa: E722
                             value = str(config.STATS_VALUES.get(sensor_id, f"{{{placeholder}}}"))
                     else:
                         value = str(config.STATS_VALUES.get(sensor_id, f"{{{placeholder}}}"))
@@ -1789,7 +1789,6 @@ class ElementItem(QGraphicsObject):
     
     def _load_image_pixmap(self, image_path: str) -> None:
         """Load and cache a pixmap from the image path."""
-        from PyQt6.QtGui import QPixmap
         from pathlib import Path
         
         self._cached_image_path = image_path
@@ -2179,6 +2178,30 @@ class PreviewCanvas(QWidget):
         scene_x = int(self._view.mapToScene(view_x, 0).x())
         self.add_guide_v(scene_x)
     
+    def _refresh_z_order(self) -> None:
+        """
+        Refresh Z-values of all items based on model order.
+        """
+        # Get elements in order from model
+        elements = self._model.get_all_elements()
+        
+        for i, element in enumerate(elements):
+            item = self._element_items.get(element.id)
+            if item:
+                if isinstance(item._element, (BackgroundImageElement, BackgroundVideoElement)):
+                     item.setZValue(-500)
+                else:
+                     # Index 0 is Top (High Z)
+                     item.setZValue(1000 - i)
+
+    def _on_rows_moved(self, parent, start, end, destination, row) -> None:
+        """Handle rows moved (reorder)."""
+        self._refresh_z_order()
+        
+    def _on_layout_changed(self, *args) -> None:
+        """Handle layout changed (reorder/sort)."""
+        self._refresh_z_order()
+
     def _connect_signals(self) -> None:
         """Connect model signals."""
         self._model.element_added.connect(self._on_element_added)
@@ -2188,7 +2211,8 @@ class PreviewCanvas(QWidget):
         self._model.guides_changed.connect(self._refresh_canvas)
         
         # Listen for model reset to refresh canvas
-        self._model.layoutChanged.connect(self._on_model_layout_changed)
+        self._model.layoutChanged.connect(self._on_layout_changed)
+        self._model.rowsMoved.connect(self._on_rows_moved)
         self._model.modelReset.connect(self._refresh_canvas)
         
         # Connect scene selection changes

@@ -35,5 +35,5 @@ def check_python_version():
               f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}-{MAX_PYTHON[0]}.{MAX_PYTHON[1]} required.")
         try:
             sys.exit(0)
-        except:
+        except:  # noqa: E722
             os._exit(0)

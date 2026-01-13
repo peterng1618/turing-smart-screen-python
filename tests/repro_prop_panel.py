@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QUndoStack
 from theme_editor.panels.properties_panel import PropertiesPanel
 from theme_editor.models.theme_model import ThemeModel
-from theme_editor.models.element import create_element, ElementType, Outline
+from theme_editor.models.element import create_element, ElementType
 
 # Create dummy app
 if not QApplication.instance():

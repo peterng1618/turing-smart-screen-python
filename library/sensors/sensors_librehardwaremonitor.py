@@ -60,7 +60,7 @@ if ctypes.windll.shell32.IsUserAnAdmin() == 0:
         "config.yaml")
     try:
         sys.exit(0)
-    except:
+    except:  # noqa: E722
         os._exit(0)
 
 handle = Hardware.Computer()
@@ -200,7 +200,7 @@ class Cpu(sensors.Cpu):
             if frequencies:
                 # Take mean of all core clock as "CPU clock" (as it is done in Windows Task Manager Performance tab)
                 return mean(frequencies)
-        except:
+        except:  # noqa: E722
             pass
 
         # Frequencies reading is not supported on this CPU
@@ -235,7 +235,7 @@ class Cpu(sensors.Cpu):
                 if sensor.SensorType == Hardware.SensorType.Temperature and str(sensor.Name).startswith(
                         "Core") and sensor.Value is not None:
                     return float(sensor.Value)
-        except:
+        except:  # noqa: E722
             pass
 
         return math.nan
@@ -250,7 +250,7 @@ class Cpu(sensors.Cpu):
                     if sensor.SensorType == Hardware.SensorType.Control and "#2" in str(
                             sensor.Name) and sensor.Value is not None:  # Is Motherboard #2 Fan always the CPU Fan ?
                         return float(sensor.Value)
-        except:
+        except:  # noqa: E722
             pass
 
         # No Fan Speed sensor for this CPU model
@@ -330,7 +330,7 @@ class Gpu(sensors.Gpu):
                     if int(sensor.Value) > 0:
                         cls.prev_fps = int(sensor.Value)
                     return cls.prev_fps
-        except:
+        except:  # noqa: E722
             pass
 
         # No FPS sensor for this GPU model
@@ -347,7 +347,7 @@ class Gpu(sensors.Gpu):
             for sensor in gpu_to_use.Sensors:
                 if sensor.SensorType == Hardware.SensorType.Control and sensor.Value is not None:
                     return float(sensor.Value)
-        except:
+        except:  # noqa: E722
             pass
 
         # No Fan Speed sensor for this GPU model
@@ -366,7 +366,7 @@ class Gpu(sensors.Gpu):
                     # Keep only real core clocks, ignore effective core clocks
                     if "Core" in str(sensor.Name) and "Effective" not in str(sensor.Name) and sensor.Value is not None:
                         return float(sensor.Value)
-        except:
+        except:  # noqa: E722
             pass
 
         # No Frequency sensor for this GPU model
@@ -409,7 +409,7 @@ class Memory(sensors.Memory):
         swap_total = swap_used + swap_available
         try:
             percent_swap = swap_used / swap_total * 100.0
-        except:
+        except:  # noqa: E722
             # No swap / pagefile disabled
             percent_swap = 0.0
 

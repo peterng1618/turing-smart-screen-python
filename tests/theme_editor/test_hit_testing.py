@@ -7,7 +7,7 @@ import pytest
 import sys
 from unittest.mock import MagicMock
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QPointF, QRectF
+from PyQt6.QtCore import QPointF
 from theme_editor.models.element import create_element, ElementType
 from theme_editor.models.theme_model import ThemeModel
 from theme_editor.canvas.preview_canvas import ElementItem

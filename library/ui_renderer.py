@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import os
 import math
-from PIL import Image, ImageDraw, ImageFilter, ImageColor, ImageFont, ImageChops
+from PIL import Image, ImageDraw, ImageFilter, ImageColor, ImageFont
 
 from library.log import logger
 from library import config # We need config to access FONTS_DIR if needed or pass it in

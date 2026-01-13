@@ -38,7 +38,6 @@ def test_outline_save():
     # The base Element.from_dict is used, or maybe create_element is effectively used?
     # Let's check if RectangleElement has from_dict.
     
-    from theme_editor.models.element import RectangleElement
     
     # If RectangleElement doesn't override from_dict, the base one is used.
     # The base one in lines 130-155 of element.py DOES NOT handle 'outline'.

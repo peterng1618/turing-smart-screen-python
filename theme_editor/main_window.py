@@ -14,23 +14,23 @@ from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QDockWidget, QToolBar, QStatusBar,
-    QMenuBar, QMenu, QMessageBox, QFileDialog, QApplication,
+    QMainWindow, QWidget, QDockWidget, QToolBar, QStatusBar,
+    QMenu, QMessageBox, QFileDialog, QApplication,
     QColorDialog, QLineEdit, QInputDialog
 )
-from PyQt6.QtCore import Qt, QSize, QSettings, QTimer
-from PyQt6.QtGui import QAction, QIcon, QKeySequence, QUndoStack, QColor
+from PyQt6.QtCore import Qt, QSettings, QTimer
+from PyQt6.QtGui import QAction, QKeySequence, QUndoStack, QColor
 
 from theme_editor.panels.layer_panel import LayerPanel
 from theme_editor.panels.properties_panel import PropertiesPanel
 from theme_editor.panels.tool_panel import ToolPanel
 from theme_editor.canvas.preview_canvas import PreviewCanvas
 from theme_editor.models.theme_model import ThemeModel
-from theme_editor.models.element import Element, ElementType, create_element, GroupElement
+from theme_editor.models.element import (
+    ElementType, create_element, BackgroundImageElement, BackgroundVideoElement
+)
 from theme_editor.commands.undo_commands import (
-    MoveElementCommand, ChangePropertyCommand, AddElementCommand, 
-    DeleteElementCommand, GroupElementsCommand, UngroupElementsCommand
+    GroupElementsCommand, UngroupElementsCommand, DeleteElementCommand
 )
 from theme_editor.utils.yaml_io import ThemeYamlIO
 from library.mock_data import MockDataProvider
@@ -565,7 +565,9 @@ class MainWindow(QMainWindow):
             yaml_io = ThemeYamlIO()
             theme_data = self._theme_model.to_data()
             source_path = self._theme_model.theme_folder
-            yaml_io.save(self._theme_name, theme_data, source_theme_path=source_path)
+            
+            # Use save_all to ensure both editor format and legacy format are saved
+            yaml_io.save_all(self._theme_name, theme_data, source_theme_path=source_path)
             
             self._undo_stack.setClean()
             self._status_bar.showMessage(f"Saved: {self._theme_name}")
@@ -619,7 +621,6 @@ class MainWindow(QMainWindow):
             return self._save_theme_as()
         
         try:
-            from PIL import Image
             
             theme_path = ThemeYamlIO().get_theme_path(self._theme_name)
             theme_data = self._theme_model.to_data()
@@ -668,7 +669,7 @@ class MainWindow(QMainWindow):
             )
             return False
     
-    def _render_ui_overlay(self, theme_data: dict, exclude_types: list = None) -> 'Image.Image':
+    def _render_ui_overlay(self, theme_data: dict, exclude_types: list = None) -> 'Image.Image':  # noqa: F821
         """
         Render ui_elements to a transparent overlay image.
         
@@ -703,7 +704,7 @@ class MainWindow(QMainWindow):
         
         return (w, h)
     
-    def _bake_video_background(self, theme_path: Path, theme_data: dict, overlay: 'Image.Image') -> None:
+    def _bake_video_background(self, theme_path: Path, theme_data: dict, overlay: 'Image.Image') -> None:  # noqa: F821
         """
         Process video with UI overlay baked in.
         """
@@ -734,7 +735,7 @@ class MainWindow(QMainWindow):
             logger.error("Video baking failed")
             raise RuntimeError("Video processing failed. Check logs for details.")
     
-    def _bake_image_background(self, theme_path: Path, theme_data: dict, overlay: 'Image.Image') -> None:
+    def _bake_image_background(self, theme_path: Path, theme_data: dict, overlay: 'Image.Image') -> None:  # noqa: F821
         """
         Composite UI overlay onto static background image.
         """
@@ -837,7 +838,10 @@ class MainWindow(QMainWindow):
                 y=int(center.y() - 50),
                 path=file_path
             )
-            self._theme_model.add_element(element)
+            
+            from theme_editor.commands.undo_commands import AddElementCommand
+            self._undo_stack.push(AddElementCommand(self._theme_model, element))
+            
             self._status_bar.showMessage(f"Added image: {Path(file_path).name}")
             return
         
@@ -889,7 +893,10 @@ class MainWindow(QMainWindow):
                 y=int(center.y() - 12),
                 icon=url
             )
-            self._theme_model.add_element(element)
+            
+            from theme_editor.commands.undo_commands import AddElementCommand
+            self._undo_stack.push(AddElementCommand(self._theme_model, element))
+            
             self._status_bar.showMessage(f"Added icon: {url.split('/')[-1].split('?')[0]}")
             return
         
@@ -907,7 +914,9 @@ class MainWindow(QMainWindow):
                 x=int(center.x() - 50),
                 y=int(center.y() - 50)
             )
-        self._theme_model.add_element(element)
+            
+        from theme_editor.commands.undo_commands import AddElementCommand
+        self._undo_stack.push(AddElementCommand(self._theme_model, element))
         self._status_bar.showMessage(f"Added {element.name}")
 
 
@@ -936,7 +945,10 @@ class MainWindow(QMainWindow):
             y=int(center.y() - 50),
             **props
         )
-        self._theme_model.add_element(element)
+        
+        from theme_editor.commands.undo_commands import AddElementCommand
+        self._undo_stack.push(AddElementCommand(self._theme_model, element))
+        
         self._status_bar.showMessage(f"Added {sensor_type} {variant}")
         
     def _on_canvas_mouse_moved(self, scene_pos) -> None:
@@ -962,8 +974,33 @@ class MainWindow(QMainWindow):
     
     def _delete_selection(self) -> None:
         """Delete selected elements."""
-        # TODO: Implement delete
-        self._status_bar.showMessage("Delete: Not yet implemented")
+        selected_ids = self._canvas.get_selected_elements()
+        if not selected_ids:
+            return
+            
+        # Filter valid deletions (skipping protected background elements)
+        to_delete = []
+        for eid in selected_ids:
+            element = self._theme_model.get_element(eid)
+            # Skip if element not found or is protected background
+            if not element or isinstance(element, (BackgroundImageElement, BackgroundVideoElement)):
+                continue
+            to_delete.append(eid)
+            
+        if not to_delete:
+            return
+            
+        # Use a macro for multiple deletes
+        if len(to_delete) > 1:
+            self._undo_stack.beginMacro("Delete Elements")
+            
+        for eid in to_delete:
+            self._undo_stack.push(DeleteElementCommand(self._theme_model, eid))
+            
+        if len(to_delete) > 1:
+            self._undo_stack.endMacro()
+            
+        self._status_bar.showMessage(f"Deleted {len(to_delete)} elements")
     
     def _duplicate(self) -> None:
         """Duplicate selected elements."""

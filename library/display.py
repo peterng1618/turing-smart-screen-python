@@ -187,7 +187,7 @@ class Display:
                     video = cv2.VideoCapture(full_local_path)
                     if not video.isOpened():
                         logger.error(f"Could not open video file: {full_local_path}")
-                        print(f"DEBUG: Failed to open video!")  # Debug print
+                        print("DEBUG: Failed to open video!")  # Debug print
                         return False
                     
                     # Get video properties
@@ -199,7 +199,7 @@ class Display:
                     
                     if not ret:
                         logger.error("Could not read frame from video")
-                        print(f"DEBUG: Could not read frame!")  # Debug print
+                        print("DEBUG: Could not read frame!")  # Debug print
                         video.release()
                         return False
                     
@@ -226,7 +226,7 @@ class Display:
                     self.lcd.video_playing = True
                     
                     logger.info(f"Video background preview loaded - {frame_count} frames at {fps:.1f} FPS")
-                    print(f"DEBUG: Video background loaded successfully!")  # Debug print
+                    print("DEBUG: Video background loaded successfully!")  # Debug print
                     return True
                     
                 except ImportError:

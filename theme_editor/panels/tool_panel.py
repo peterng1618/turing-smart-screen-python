@@ -5,14 +5,13 @@ Provides a categorization of creation tools in a dockable panel.
 """
 
 import logging
-from typing import Optional, Callable
+from typing import Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QGridLayout, QToolButton, 
-    QLabel, QGroupBox, QMenu, QScrollArea, QFrame, QSizePolicy
+    QGroupBox, QMenu, QScrollArea, QFrame, QSizePolicy
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QSize
-from PyQt6.QtGui import QAction
+from PyQt6.QtCore import Qt, pyqtSignal
 
 from theme_editor.models.element import ElementType
 

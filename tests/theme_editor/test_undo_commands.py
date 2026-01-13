@@ -4,7 +4,6 @@ Unit tests for theme_editor.commands.undo_commands module.
 """
 
 import pytest
-from unittest.mock import MagicMock, patch
 
 from PyQt6.QtGui import QUndoStack
 
@@ -264,6 +263,7 @@ class TestDeleteElementCommand:
         assert child.id in parent.children
 
 
+
 class TestReorderElementCommand:
     """Tests for ReorderElementCommand."""
     
@@ -277,8 +277,8 @@ class TestReorderElementCommand:
         model.add_element(elem2)
         model.add_element(elem3)
         
-        # Move elem3 from index 2 to index 0
-        cmd = ReorderElementCommand(model, elem3.id, 2, 0)
+        # Move elem3 to index 0 (parent=None for root)
+        cmd = ReorderElementCommand(model, elem3.id, None, 0)
         undo_stack.push(cmd)
         
         # elem3 should now be first
@@ -293,8 +293,8 @@ class TestReorderElementCommand:
         model.add_element(elem1)
         model.add_element(elem2)
         
-        # Swap order
-        cmd = ReorderElementCommand(model, elem2.id, 1, 0)
+        # Move elem2 to index 0
+        cmd = ReorderElementCommand(model, elem2.id, None, 0)
         undo_stack.push(cmd)
         
         undo_stack.undo()
@@ -302,6 +302,82 @@ class TestReorderElementCommand:
         roots = model.get_root_elements()
         assert roots[0].id == elem1.id
         assert roots[1].id == elem2.id
+
+
+class TestDuplicateElementCommand:
+    """Tests for DuplicateElementCommand."""
+    
+    def test_redo_duplicates_element(self, model, undo_stack):
+        """Test that redo duplicates an element."""
+        from theme_editor.commands.undo_commands import DuplicateElementCommand
+        
+        elem = create_element(ElementType.RECTANGLE, name="Original")
+        model.add_element(elem)
+        original_count = model.rowCount()
+        
+        cmd = DuplicateElementCommand(model, elem.id)
+        undo_stack.push(cmd)
+        
+        # Should have one more element
+        assert model.rowCount() == original_count + 1
+        
+        # New element should be a copy
+        roots = model.get_root_elements()
+        new_elem = roots[1] # Assumes appended/inserted after
+        assert new_elem.id != elem.id
+        assert new_elem.name == "Original (Copy)"
+    
+    def test_undo_removes_duplicate(self, model, undo_stack):
+        """Test that undo removes the duplicated element."""
+        from theme_editor.commands.undo_commands import DuplicateElementCommand
+        
+        elem = create_element(ElementType.RECTANGLE)
+        model.add_element(elem)
+        original_count = model.rowCount()
+        
+        cmd = DuplicateElementCommand(model, elem.id)
+        undo_stack.push(cmd)
+        
+        assert model.rowCount() == original_count + 1
+        
+        undo_stack.undo()
+        
+        assert model.rowCount() == original_count
+    
+    def test_redo_restores_tree(self, model, undo_stack):
+        """Test that redo consistently restores the same duplicated tree."""
+        from theme_editor.commands.undo_commands import DuplicateElementCommand
+        
+        # Create a hierarchy: Group -> Child
+        group = create_element(ElementType.GROUP, name="Group")
+        model.add_element(group)
+        
+        child = create_element(ElementType.RECTANGLE, name="Child")
+        model.add_element(child, parent_id=group.id)
+        
+        # Duplicate the group
+        cmd = DuplicateElementCommand(model, group.id)
+        undo_stack.push(cmd)
+        
+        # Find the new group
+        roots = model.get_root_elements()
+        assert len(roots) == 2
+        new_group = roots[1]
+        
+        # Sanity check new structure
+        assert len(new_group.children) == 1
+        new_child_id = new_group.children[0]
+        
+        undo_stack.undo()
+        undo_stack.redo()
+        
+        # Check if we got the same objects/IDs back
+        roots_after = model.get_root_elements()
+        assert len(roots_after) == 2
+        restored_group = roots_after[1]
+        
+        assert restored_group.id == new_group.id
+        assert restored_group.children[0] == new_child_id
 
 
 class TestGroupElementsCommand:

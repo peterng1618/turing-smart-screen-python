@@ -51,7 +51,7 @@ Or the troubleshooting page: https://github.com/mathoudebine/turing-smart-screen
         e))
     try:
         sys.exit(0)
-    except:
+    except:  # noqa: E722
         os._exit(0)
 
 from library.sensors.sensors_python import sensors_fans, is_cpu_fan
@@ -316,7 +316,7 @@ class TuringConfigWindow:
             if theme_data['display'].get("DISPLAY_SIZE", '3.5"') == SIZE_2_1_INCH:
                 # This is a circular screen: apply a circle mask over the preview
                 theme_preview.paste(circular_mask, mask=circular_mask)
-        except:
+        except:  # noqa: E722
             theme_preview = Image.open(MAIN_DIRECTORY + "res/docs/no-preview.png")
         finally:
             theme_preview.thumbnail((320, 480), Image.Resampling.LANCZOS)
@@ -345,14 +345,14 @@ class TuringConfigWindow:
 
         try:
             self.theme_cb.set(self.config['config']['THEME'])
-        except:
+        except:  # noqa: E722
             self.theme_cb.set("")
 
         self.load_theme_preview()
 
         try:
             self.hwlib_cb.set(hw_lib_map[self.config['config']['HW_SENSORS']])
-        except:
+        except:  # noqa: E722
             self.hwlib_cb.current(0)
 
         try:
@@ -360,7 +360,7 @@ class TuringConfigWindow:
                 self.eth_cb.current(0)
             else:
                 self.eth_cb.set(self.config['config']['ETH'])
-        except:
+        except:  # noqa: E722
             self.eth_cb.current(0)
 
         try:
@@ -368,7 +368,7 @@ class TuringConfigWindow:
                 self.wl_cb.current(0)
             else:
                 self.wl_cb.set(self.config['config']['WLO'])
-        except:
+        except:  # noqa: E722
             self.wl_cb.current(0)
 
         try:
@@ -376,7 +376,7 @@ class TuringConfigWindow:
                 self.com_cb.current(0)
             else:
                 self.com_cb.set(self.config['config']['COM_PORT'])
-        except:
+        except:  # noqa: E722
             self.com_cb.current(0)
 
         # Guess display size from theme in the configuration
@@ -384,24 +384,24 @@ class TuringConfigWindow:
         size = size.replace(SIZE_2_1_INCH, SIZE_2_x_INCH)   # If a theme is for 2.1" then it also is for 2.8"
         try:
             self.size_cb.set(size)
-        except:
+        except:  # noqa: E722
             self.size_cb.current(0)
 
         # Guess model from revision and size
         revision = self.config['display']['REVISION']
         try:
             self.model_cb.set(revision_and_size_to_model_map[(revision, size)])
-        except:
+        except:  # noqa: E722
             self.model_cb.current(0)
 
         try:
             self.orient_cb.set(reverse_map[self.config['display']['DISPLAY_REVERSE']])
-        except:
+        except:  # noqa: E722
             self.orient_cb.current(0)
 
         try:
             self.brightness_slider.set(int(self.config['display']['BRIGHTNESS']))
-        except:
+        except:  # noqa: E722
             self.brightness_slider.set(50)
 
         try:
@@ -409,7 +409,7 @@ class TuringConfigWindow:
                 self.cpu_fan_cb.current(0)
             else:
                 self.cpu_fan_cb.set(self.config['config']['CPU_FAN'])
-        except:
+        except:  # noqa: E722
             self.cpu_fan_cb.current(0)
 
         # Reload content on screen
@@ -511,7 +511,7 @@ class TuringConfigWindow:
         themes = get_themes(size)
         self.theme_cb.config(values=themes)
 
-        if not self.theme_cb.get() in themes:
+        if self.theme_cb.get() not in themes:
             # The selected theme does not exist anymore / is not allowed for this screen model : select 1st theme avail.
             self.theme_cb.set(themes[0])
 
@@ -662,7 +662,7 @@ class MoreConfigWindow:
             return True
         try:
             float(coord)
-        except:
+        except:  # noqa: E722
             return False
         return True
 
@@ -677,32 +677,32 @@ class MoreConfigWindow:
 
         try:
             self.ping_entry.insert(0, self.config['config']['PING'])
-        except:
+        except:  # noqa: E722
             self.ping_entry.insert(0, "8.8.8.8")
 
         try:
             self.api_entry.insert(0, self.config['config']['WEATHER_API_KEY'])
-        except:
+        except:  # noqa: E722
             pass
 
         try:
             self.lat_entry.insert(0, self.config['config']['WEATHER_LATITUDE'])
-        except:
+        except:  # noqa: E722
             self.lat_entry.insert(0, "45.75")
 
         try:
             self.long_entry.insert(0, self.config['config']['WEATHER_LONGITUDE'])
-        except:
+        except:  # noqa: E722
             self.long_entry.insert(0, "45.75")
 
         try:
             self.unit_cb.set(weather_unit_map[self.config['config']['WEATHER_UNITS']])
-        except:
+        except:  # noqa: E722
             self.unit_cb.set(0)
 
         try:
             self.lang_cb.set(weather_lang_map[self.config['config']['WEATHER_LANGUAGE']])
-        except:
+        except:  # noqa: E722
             self.lang_cb.set(weather_lang_map["en"])
     
     def citysearch_show_warning(self, warning):
@@ -721,7 +721,7 @@ class MoreConfigWindow:
         try:
             request = requests.get(OPENWEATHER_GEOAPI_URL, timeout=5, params={"appid": api_key, "lang": lang, 
                                    "q": city, "limit": 10})
-        except:
+        except:  # noqa: E722
             self.citysearch_show_warning("Error fetching OpenWeatherMap Geo API")
             return
 

@@ -1,6 +1,5 @@
 
 import unittest
-from pathlib import Path
 from PyQt6.QtGui import QUndoStack
 
 from theme_editor.models.theme_model import ThemeModel

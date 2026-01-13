@@ -9,22 +9,22 @@ Provides a property editor for the currently selected element with:
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
+    QWidget, QVBoxLayout, QScrollArea, QGroupBox, QFormLayout,
     QLabel, QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox,
-    QComboBox, QPushButton, QColorDialog, QSlider, QScrollArea,
-    QFileDialog, QMessageBox
+    QComboBox, QPushButton, QHBoxLayout, QColorDialog, QFileDialog,
+    QSizePolicy, QFrame, QMessageBox, QSlider
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QUndoStack, QColor, QFont
+from PyQt6.QtGui import QUndoStack, QColor
 
 from theme_editor.models.theme_model import ThemeModel
 from theme_editor.models.element import (
-    Element, ElementType, Shadow, Outline,
+    Element, Shadow, Outline,
     RectangleElement, CircleElement, TriangleElement, LineElement,
-    TextElement, ImageElement, IconElement, GroupElement, DynamicTextElement,
+    TextElement, ImageElement, IconElement, DynamicTextElement,
     BackgroundImageElement, BackgroundVideoElement, ThemeInfoElement
 )
 
@@ -536,6 +536,99 @@ class PropertiesPanel(QWidget):
         
         self._content_layout.addWidget(group)
     
+        self._content_layout.addWidget(group)
+    
+    def _add_outline_section(self, element: Element, form: QFormLayout) -> None:
+        """Add outline properties section."""
+        # Separator
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        form.addRow(line)
+        
+        # Enable toggle
+        has_outline = element.outline is not None
+        check = QCheckBox("Outline")
+        check.setChecked(has_outline)
+        check.toggled.connect(self._on_outline_enabled_toggled)
+        form.addRow(check)
+        self._widgets["outline_enabled"] = check
+        
+        if has_outline and element.outline:
+            # Width
+            w_spin = QSpinBox()
+            w_spin.setRange(1, 100)
+            w_spin.setValue(element.outline.width)
+            w_spin.valueChanged.connect(lambda v: self._on_outline_property_changed("width", v))
+            form.addRow("  Width:", w_spin)
+            self._widgets["outline_width"] = w_spin
+            
+            # Color
+            c_btn = ColorButton(element.outline.color)
+            c_btn.color_changed.connect(lambda v: self._on_outline_property_changed("color", v))
+            form.addRow("  Color:", c_btn)
+            self._widgets["outline_color"] = c_btn
+            
+            # Cap style
+            cap = QComboBox()
+            cap.addItems(["butt", "round", "square"])
+            cap.setCurrentText(element.outline.cap)
+            cap.currentTextChanged.connect(lambda v: self._on_outline_property_changed("cap", v))
+            form.addRow("  Cap:", cap)
+            self._widgets["outline_cap"] = cap
+
+    def _add_shadow_section(self, element: Element, form: QFormLayout) -> None:
+        """Add shadow properties section."""
+        # Separator
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        form.addRow(line)
+        
+        # Enable toggle
+        has_shadow = element.shadow is not None
+        check = QCheckBox("Shadow")
+        check.setChecked(has_shadow)
+        check.toggled.connect(self._on_shadow_enabled_toggled)
+        form.addRow(check)
+        self._widgets["shadow_enabled"] = check
+        
+        if has_shadow and element.shadow:
+            # Blur
+            b_spin = QSpinBox()
+            b_spin.setRange(0, 50)
+            b_spin.setValue(element.shadow.blur)
+            b_spin.valueChanged.connect(lambda v: self._on_shadow_property_changed("blur", v))
+            form.addRow("  Blur:", b_spin)
+            self._widgets["shadow_blur"] = b_spin
+            
+            # Color
+            c_btn = ColorButton(element.shadow.color)
+            c_btn.color_changed.connect(lambda v: self._on_shadow_property_changed("color", v))
+            form.addRow("  Color:", c_btn)
+            self._widgets["shadow_color"] = c_btn
+            
+            # Offset
+            off_layout = QHBoxLayout()
+            
+            ox = QSpinBox()
+            ox.setRange(-50, 50)
+            ox.setValue(element.shadow.offset_x)
+            ox.valueChanged.connect(lambda v: self._on_shadow_property_changed("offset_x", v))
+            off_layout.addWidget(QLabel("X:"))
+            off_layout.addWidget(ox)
+            self._widgets["shadow_offset_x"] = ox
+            
+            oy = QSpinBox()
+            oy.setRange(-50, 50)
+            oy.setValue(element.shadow.offset_y)
+            oy.valueChanged.connect(lambda v: self._on_shadow_property_changed("offset_y", v))
+            off_layout.addWidget(QLabel("Y:"))
+            off_layout.addWidget(oy)
+            self._widgets["shadow_offset_y"] = oy
+            
+            form.addRow("  Offset:", off_layout)
+
     def _add_typography_group(self, element: Element) -> None:
         """Add typography properties group (font, size, align)."""
         group = QGroupBox("Typography")
@@ -608,17 +701,16 @@ class PropertiesPanel(QWidget):
     
     def _add_image_group(self, element: ImageElement) -> None:
         """Add image properties group (path, browse)."""
-        from pathlib import Path
         
         group = QGroupBox("Image Source")
         layout = QVBoxLayout(group)
         
         # Current path
         path_layout = QHBoxLayout()
-        path_label.setStyleSheet("color: #aaa; font-size: 10px;")
-        path_label.setWordWrap(True)
-        path_label.setToolTip(element.path)
-        path_layout.addWidget(path_label, 1)
+        path_label.setStyleSheet("color: #aaa; font-size: 10px;")  # noqa: F821
+        path_label.setWordWrap(True)  # noqa: F821
+        path_label.setToolTip(element.path)  # noqa: F821
+        path_layout.addWidget(path_label, 1)  # noqa: F821
         
         browse_btn = QPushButton("Browse...")
         browse_btn.setFixedWidth(70)
@@ -626,7 +718,7 @@ class PropertiesPanel(QWidget):
         path_layout.addWidget(browse_btn)
         
         layout.addLayout(path_layout)
-        self._widgets["path_label"] = path_label
+        self._widgets["path_label"] = path_label  # noqa: F821
         
         self._content_layout.addWidget(group)
     
@@ -697,9 +789,9 @@ class PropertiesPanel(QWidget):
         self._widgets["icon"] = url_edit
         
         # Help text
-        help_label.setStyleSheet("color: #999; font-size: 9px;")
-        help_label.setWordWrap(True)
-        layout.addWidget(help_label)
+        help_label.setStyleSheet("color: #999; font-size: 9px;")  # noqa: F821
+        help_label.setWordWrap(True)  # noqa: F821
+        layout.addWidget(help_label)  # noqa: F821
         
         self._content_layout.addWidget(group)
     
@@ -1168,214 +1260,23 @@ class PropertiesPanel(QWidget):
         if self._updating or not self._current_element_id:
             return
         
-        self._model.set_element_property(self._current_element_id, prop_name, value)
-        self.property_changed.emit(self._current_element_id, prop_name, value)
-    
-    def _on_aspect_lock_toggled(self, checked: bool) -> None:
-        """Handle aspect lock toggle."""
-        self._aspect_locked = checked
-        if "aspect_lock" in self._widgets:
-            self._widgets["aspect_lock"].setText("🔗" if checked else "⛓️‍💥")
-            self._widgets["aspect_lock"].setToolTip(
-                "Lock aspect ratio" if checked else "Unlock aspect ratio"
-            )
-    
-    def _on_width_changed(self, value: int) -> None:
-        """Handle width change with aspect ratio lock."""
-        if self._updating:
-            return
-        
-        self._on_property_changed("width", value)
-        
-        if self._aspect_locked and "height" in self._widgets:
-            # Calculate new height based on aspect ratio
-            new_height = max(1, int(value / self._aspect_ratio))
-            self._updating = True
-            self._widgets["height"].setValue(new_height)
-            self._updating = False
-            self._on_property_changed("height", new_height)
-    
-    def _on_height_changed(self, value: int) -> None:
-        """Handle height change with aspect ratio lock."""
-        if self._updating:
-            return
-        
-        self._on_property_changed("height", value)
-        
-        if self._aspect_locked and "width" in self._widgets:
-            # Calculate new width based on aspect ratio
-            new_width = max(1, int(value * self._aspect_ratio))
-            self._updating = True
-            self._widgets["width"].setValue(new_width)
-            self._updating = False
-            self._on_property_changed("width", new_width)
-    
-    def _add_outline_section(self, element: Element, parent_layout: QFormLayout = None) -> None:
-        """Add outline controls for supported elements."""
-        group = QGroupBox("Outline")
-        group.setCheckable(True)
-        group.setChecked(element.outline is not None)
-        group.toggled.connect(self._on_outline_enabled_toggled)
-        
-        form = QFormLayout(group)
-        
-        # Width
-        width_spin = QSpinBox()
-        width_spin.setRange(1, 50)
-        width_spin.setValue(element.outline.width if element.outline else 1)
-        width_spin.valueChanged.connect(lambda v: self._on_outline_property_changed("width", v))
-        form.addRow("Width:", width_spin)
-        self._widgets["outline_width"] = width_spin
-        
-        # Color
-        color = element.outline.color if element.outline else (255, 255, 255, 255)
-        color_btn = ColorButton(color)
-        color_btn.color_changed.connect(lambda v: self._on_outline_property_changed("color", v))
-        form.addRow("Color:", color_btn)
-        self._widgets["outline_color"] = color_btn
-        
-        # Dash array (optional)
-        dash_edit = QLineEdit()
-        dash_text = ""
-        if element.outline and element.outline.dash_array:
-            # Format numbers to look nice (remove .0 if integer)
-            parts = []
-            for d in element.outline.dash_array:
-                if isinstance(d, float) and d.is_integer():
-                    parts.append(str(int(d)))
-                else:
-                    parts.append(str(d))
-            dash_text = ", ".join(parts)
-        
-        dash_edit.setText(dash_text)
-        dash_edit.setPlaceholderText("e.g. 10, 5")
-        dash_edit.textChanged.connect(self._on_outline_dash_changed)
-        form.addRow("Dash:", dash_edit)
-        self._widgets["outline_dash"] = dash_edit
-        
-        # Cap
-        cap_combo = QComboBox()
-        cap_combo.addItems(["butt", "round"])
-        cap_combo.setCurrentText(element.outline.cap if element.outline else "butt")
-        cap_combo.currentTextChanged.connect(lambda v: self._on_outline_property_changed("cap", v))
-        form.addRow("Cap:", cap_combo)
-        self._widgets["outline_cap"] = cap_combo
-        
-        # Add to parent layout if provided, otherwise main content
-        if parent_layout:
-            parent_layout.addRow(group)
-        else:
-            self._content_layout.addWidget(group)
-    
-    def _on_outline_enabled_toggled(self, checked: bool) -> None:
-        """Handle outline enable/disable toggle."""
-        # Find the group box to collapse/expand if needed
-        # But QGroupBox checkable automatically disables children, usually sufficient.
-        # If we want to hide children (true collapse), we can do it here.
-        # For now, let's stick to checkable behavior which toggles the `element.outline` property.
-        
-        if self._updating or not self._current_element_id:
-            return
-        
         element = self._model.get_element(self._current_element_id)
         if not element:
             return
-        
-        if checked:
-            # Create outline with current widget values
-            width = self._widgets.get("outline_width")
-            color_btn = self._widgets.get("outline_color")
-            cap = self._widgets.get("outline_cap")
+
+        # Get old value for undo
+        old_value = getattr(element, prop_name, None)
+        if old_value == value:
+            return
             
-            element.outline = Outline(
-                width=width.value() if width else 1,
-                color=color_btn.color if color_btn else (255, 255, 255, 255),
-                cap=cap.currentText() if cap else "butt"
-            )
-        else:
-            element.outline = None
+        from theme_editor.commands.undo_commands import ChangePropertyCommand
+        cmd = ChangePropertyCommand(
+            self._model, self._current_element_id, prop_name, old_value, value
+        )
+        self._undo_stack.push(cmd)
         
-        self._model.element_changed.emit(self._current_element_id, "outline", element.outline)
-    
-    def _on_outline_dash_changed(self, text: str) -> None:
-        """Handle outline dash array change."""
-        if self._updating or not self._current_element_id:
-            return
-        
-        element = self._model.get_element(self._current_element_id)
-        if not element or not hasattr(element, 'outline') or not element.outline:
-            return
-        
-        # Parse dash array
-        try:
-            if text.strip():
-                # Split and parse numbers
-                values = []
-                for d in text.split(","):
-                    d_str = d.strip()
-                    if not d_str:
-                        continue
-                    val = float(d_str)
-                    # Use integer if it's a whole number
-                    if val.is_integer():
-                        values.append(int(val))
-                    else:
-                        values.append(val)
-                element.outline.dash_array = values
-            else:
-                element.outline.dash_array = None
-        except ValueError:
-            pass  # Invalid input, ignore
-        
-        self._model.element_changed.emit(self._current_element_id, "outline.dash_array", element.outline.dash_array)
-    
-    def _add_shadow_section(self, element: Element, parent_layout: QFormLayout = None) -> None:
-        """Add shadow controls for element."""
-        group = QGroupBox("Shadow")
-        group.setCheckable(True)
-        group.setChecked(element.shadow is not None)
-        group.toggled.connect(self._on_shadow_enabled_toggled)
-        
-        form = QFormLayout(group)
-        
-        # Blur
-        blur_spin = QSpinBox()
-        blur_spin.setRange(0, 100)
-        blur_spin.setValue(element.shadow.blur if element.shadow else 5)
-        blur_spin.valueChanged.connect(lambda v: self._on_shadow_property_changed("blur", v))
-        form.addRow("Blur:", blur_spin)
-        self._widgets["shadow_blur"] = blur_spin
-        
-        # Color
-        color = element.shadow.color if element.shadow else (0, 0, 0, 128)
-        color_btn = ColorButton(color)
-        color_btn.color_changed.connect(lambda v: self._on_shadow_property_changed("color", v))
-        form.addRow("Color:", color_btn)
-        self._widgets["shadow_color"] = color_btn
-        
-        # Offset
-        offset_layout = QHBoxLayout()
-        offset_x = QSpinBox()
-        offset_x.setRange(-100, 100)
-        offset_x.setValue(element.shadow.offset_x if element.shadow else 3)
-        offset_x.valueChanged.connect(lambda v: self._on_shadow_property_changed("offset_x", v))
-        offset_layout.addWidget(QLabel("X:"))
-        offset_layout.addWidget(offset_x)
-        offset_y = QSpinBox()
-        offset_y.setRange(-100, 100)
-        offset_y.setValue(element.shadow.offset_y if element.shadow else 3)
-        offset_y.valueChanged.connect(lambda v: self._on_shadow_property_changed("offset_y", v))
-        offset_layout.addWidget(QLabel("Y:"))
-        offset_layout.addWidget(offset_y)
-        form.addRow("Offset:", offset_layout)
-        self._widgets["shadow_offset_x"] = offset_x
-        self._widgets["shadow_offset_y"] = offset_y
-        
-        # Add to parent layout if provided
-        if parent_layout:
-            parent_layout.addRow(group)
-        else:
-            self._content_layout.addWidget(group)
+        # Signal is emitted by the model when property changes, which updates UI
+        # self.property_changed.emit(self._current_element_id, prop_name, value)
     
     def _on_shadow_enabled_toggled(self, checked: bool) -> None:
         """Handle shadow enable/disable toggle."""
@@ -1386,23 +1287,99 @@ class PropertiesPanel(QWidget):
         if not element:
             return
         
+        from theme_editor.commands.undo_commands import ChangePropertyCommand
+        
         if checked:
-            # Create shadow with current widget values
+            # Create shadow with default values or from UI widgets if persistent
             blur = self._widgets.get("shadow_blur")
             color_btn = self._widgets.get("shadow_color")
             offset_x = self._widgets.get("shadow_offset_x")
             offset_y = self._widgets.get("shadow_offset_y")
             
-            element.shadow = Shadow(
+            new_shadow = Shadow(
                 blur=blur.value() if blur else 5,
                 color=color_btn.color if color_btn else (0, 0, 0, 128),
                 offset_x=offset_x.value() if offset_x else 3,
                 offset_y=offset_y.value() if offset_y else 3
             )
+            cmd = ChangePropertyCommand(
+                self._model, self._current_element_id, "shadow", None, new_shadow
+            )
         else:
-            element.shadow = None
+            cmd = ChangePropertyCommand(
+                self._model, self._current_element_id, "shadow", element.shadow, None
+            )
         
-        self._model.element_changed.emit(self._current_element_id, "shadow", element.shadow)
+        self._undo_stack.push(cmd)
+
+    def _on_property_changed(self, prop_name: str, value: Any) -> None:
+        """Handle generic property change."""
+        if self._updating or not self._current_element_id:
+            return
+            
+        element = self._model.get_element(self._current_element_id)
+        if not element:
+            return
+            
+        if hasattr(element, prop_name):
+            old_val = getattr(element, prop_name)
+            if old_val == value:
+                return
+            
+            from theme_editor.commands.undo_commands import ChangePropertyCommand
+            cmd = ChangePropertyCommand(
+                self._model, self._current_element_id, prop_name, old_val, value
+            )
+            self._undo_stack.push(cmd)
+
+    def _on_aspect_lock_toggled(self, checked: bool) -> None:
+        """Handle aspect ratio lock toggle."""
+        self._aspect_locked = checked
+        if checked and self._current_element_id:
+            # Recalculate aspect ratio based on current values
+            w_widget = self._widgets.get("width")
+            h_widget = self._widgets.get("height")
+            
+            if isinstance(w_widget, QSpinBox) and isinstance(h_widget, QSpinBox):
+                w = w_widget.value()
+                h = h_widget.value()
+                self._aspect_ratio = w / max(1, h)
+
+    def _on_width_changed(self, value: int) -> None:
+        """Handle width change with aspect ratio locking."""
+        if self._updating:
+            return
+            
+        self._on_property_changed("width", value)
+        
+        if self._aspect_locked and "height" in self._widgets:
+            self._updating = True
+            try:
+                new_h = int(value / self._aspect_ratio)
+                h_widget = self._widgets["height"]
+                if isinstance(h_widget, QSpinBox):
+                    h_widget.setValue(new_h)
+                    self._on_property_changed("height", new_h)
+            finally:
+                self._updating = False
+
+    def _on_height_changed(self, value: int) -> None:
+        """Handle height change with aspect ratio locking."""
+        if self._updating:
+            return
+            
+        self._on_property_changed("height", value)
+        
+        if self._aspect_locked and "width" in self._widgets:
+            self._updating = True
+            try:
+                new_w = int(value * self._aspect_ratio)
+                w_widget = self._widgets["width"]
+                if isinstance(w_widget, QSpinBox):
+                    w_widget.setValue(new_w)
+                    self._on_property_changed("width", new_w)
+            finally:
+                self._updating = False
     
     def _on_shadow_property_changed(self, prop_name: str, value: Any) -> None:
         """Handle shadow property change."""
@@ -1410,19 +1387,118 @@ class PropertiesPanel(QWidget):
             return
         
         element = self._model.get_element(self._current_element_id)
-        if element and element.shadow:
-            setattr(element.shadow, prop_name, value)
-            self._model.element_changed.emit(self._current_element_id, f"shadow.{prop_name}", value)
+        if hasattr(element, 'shadow') and element.shadow:
+            old_val = getattr(element.shadow, prop_name)
+            if old_val == value:
+                return
+                
+            from theme_editor.commands.undo_commands import ChangePropertyCommand
+            # For nested properties, we normally replace the whole object or use a specialized command.
+            # ChangePropertyCommand handles dot notation "shadow.blur"? 
+            # Implemented ChangePropertyCommand does NOT support nested attribute setting out of the box unless logic is added.
+            # Let's check ChangePropertyCommand implementation.
+            # Assuming ChangePropertyCommand uses setattr(element, prop, value).
+            # To support "shadow.blur", we might need to modify ChangePropertyCommand or use a clumsy workaround 
+            # where we clone the shadow object.
+            # Cloning is safer for immutable style record keeping.
+            
+            import copy
+            new_shadow = copy.copy(element.shadow)
+            setattr(new_shadow, prop_name, value)
+            
+            cmd = ChangePropertyCommand(
+                self._model, self._current_element_id, "shadow", element.shadow, new_shadow
+            )
+            self._undo_stack.push(cmd)
     
+    def _on_outline_enabled_toggled(self, checked: bool) -> None:
+        """Handle outline enable/disable toggle."""
+        if self._updating or not self._current_element_id:
+            return
+        
+        element = self._model.get_element(self._current_element_id)
+        if not element:
+            return
+            
+        from theme_editor.commands.undo_commands import ChangePropertyCommand
+        
+        if checked:
+            width = self._widgets.get("outline_width")
+            color_btn = self._widgets.get("outline_color")
+            cap = self._widgets.get("outline_cap")
+            
+            new_outline = Outline(
+                width=width.value() if width else 1,
+                color=color_btn.color if color_btn else (255, 255, 255, 255),
+                cap=cap.currentText() if cap else "butt"
+            )
+            cmd = ChangePropertyCommand(
+                self._model, self._current_element_id, "outline", None, new_outline
+            )
+        else:
+            cmd = ChangePropertyCommand(
+                self._model, self._current_element_id, "outline", element.outline, None
+            )
+        
+        self._undo_stack.push(cmd)
+
     def _on_outline_property_changed(self, prop_name: str, value: Any) -> None:
         """Handle outline property change."""
         if self._updating or not self._current_element_id:
             return
         
         element = self._model.get_element(self._current_element_id)
-        if element and hasattr(element, 'outline') and element.outline:
-            setattr(element.outline, prop_name, value)
-            self._model.element_changed.emit(self._current_element_id, f"outline.{prop_name}", value)
+        if hasattr(element, 'outline') and element.outline:
+            old_val = getattr(element.outline, prop_name)
+            if old_val == value:
+                return
+
+            import copy
+            new_outline = copy.copy(element.outline)
+            setattr(new_outline, prop_name, value)
+            
+            from theme_editor.commands.undo_commands import ChangePropertyCommand
+            cmd = ChangePropertyCommand(
+                self._model, self._current_element_id, "outline", element.outline, new_outline
+            )
+            self._undo_stack.push(cmd)
+    
+    def _on_outline_dash_changed(self, text: str) -> None:
+        """Handle outline dash array change."""
+        if self._updating or not self._current_element_id:
+            return
+        
+        element = self._model.get_element(self._current_element_id)
+        if not element or not hasattr(element, 'outline') or not element.outline:
+            return
+            
+        # Parse logic
+        new_dash = None
+        try:
+            if text.strip():
+                values = []
+                for d in text.split(","):
+                    d_str = d.strip()
+                    if not d_str: continue
+                    val = float(d_str)
+                    if val.is_integer(): values.append(int(val))
+                    else: values.append(val)
+                new_dash = values
+        except ValueError:
+            return # Invalid
+            
+        old_dash = element.outline.dash_array
+        if old_dash == new_dash: return
+        
+        import copy
+        new_outline = copy.copy(element.outline)
+        new_outline.dash_array = new_dash
+        
+        from theme_editor.commands.undo_commands import ChangePropertyCommand
+        cmd = ChangePropertyCommand(
+            self._model, self._current_element_id, "outline", element.outline, new_outline
+        )
+        self._undo_stack.push(cmd)
     
     def update_property(self, prop_name: str, value: Any) -> None:
         """

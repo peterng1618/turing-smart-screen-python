@@ -14,15 +14,13 @@ from typing import List, Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QPushButton,
-    QMenu, QStyledItemDelegate, QStyleOptionViewItem, QStyle
+    QMenu, QStyledItemDelegate, QStyleOptionViewItem
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QModelIndex, QPoint, QItemSelection, QAbstractProxyModel, QSortFilterProxyModel
-from PyQt6.QtGui import QUndoStack, QAction, QIcon, QPainter, QMouseEvent
-
+from PyQt6.QtCore import Qt, pyqtSignal, QModelIndex, QPoint, QItemSelection, QEvent
+from PyQt6.QtGui import QUndoStack, QPainter
 from theme_editor.models.theme_model import ThemeModel
 from theme_editor.models.element import (
-    ElementType, create_element,
-    BackgroundImageElement, BackgroundVideoElement
+    ElementType, BackgroundImageElement, BackgroundVideoElement
 )
 
 logger = logging.getLogger(__name__)
@@ -60,17 +58,65 @@ class LayerItemDelegate(QStyledItemDelegate):
             rect.width() - 2 * (self.ICON_SIZE + self.ICON_PADDING), 0,
             -self.ICON_SIZE - self.ICON_PADDING, 0
         )
+        # Using simple text for now, can be replaced by QIcon/drawPixmap
         if visible:
-            painter.drawText(eye_rect, Qt.AlignmentFlag.AlignCenter, "👁")
+            painter.drawText(eye_rect, Qt.AlignmentFlag.AlignCenter, "👁") # Open
         else:
-            painter.drawText(eye_rect, Qt.AlignmentFlag.AlignCenter, "👁‍🗨")
+            painter.drawText(eye_rect, Qt.AlignmentFlag.AlignCenter, "⦸") # Closed/Hidden
         
         # Draw lock icon
         lock_rect = option.rect.adjusted(
             rect.width() - self.ICON_SIZE - self.ICON_PADDING, 0, 0, 0
         )
         if locked:
-            painter.drawText(lock_rect, Qt.AlignmentFlag.AlignCenter, "🔒")
+            painter.drawText(lock_rect, Qt.AlignmentFlag.AlignCenter, "🔒") # Closed Lock
+        else:
+            painter.drawText(lock_rect, Qt.AlignmentFlag.AlignCenter, "🔓") # Open Lock
+
+    def editorEvent(self, event: QEvent, model: ThemeModel, option: QStyleOptionViewItem, index: QModelIndex) -> bool:
+        """Handle mouse clicks on icons."""
+        if event.type() == QEvent.Type.MouseButtonRelease:
+            mouse_event = event
+            pos = mouse_event.position().toPoint()
+            rect = option.rect
+            
+            # Icon areas
+            eye_rect = option.rect.adjusted(
+                rect.width() - 2 * (self.ICON_SIZE + self.ICON_PADDING), 0,
+                -self.ICON_SIZE - self.ICON_PADDING, 0
+            )
+            lock_rect = option.rect.adjusted(
+                rect.width() - self.ICON_SIZE - self.ICON_PADDING, 0, 0, 0
+            )
+            
+            # Check for Eye click
+            if eye_rect.contains(pos):
+                element_id = index.data(ThemeModel.ElementIdRole)
+                visible = index.data(ThemeModel.VisibleRole)
+                
+                # Use ChangePropertyCommand via the model's stack reference if available
+                if hasattr(model, '_undo_stack'):
+                    from theme_editor.commands.undo_commands import ChangePropertyCommand
+                    cmd = ChangePropertyCommand(
+                        model, element_id, "visible", visible, not visible
+                    )
+                    model._undo_stack.push(cmd)
+                    return True # Consumed
+            
+            # Check for Lock click
+            elif lock_rect.contains(pos):
+                element_id = index.data(ThemeModel.ElementIdRole)
+                locked = index.data(ThemeModel.LockedRole)
+                
+                if hasattr(model, '_undo_stack'):
+                    from theme_editor.commands.undo_commands import ChangePropertyCommand
+                    cmd = ChangePropertyCommand(
+                        model, element_id, "locked", locked, not locked
+                    )
+                    model._undo_stack.push(cmd)
+                    return True # Consumed
+                    
+        return super().editorEvent(event, model, option, index)
 
 
 class LayerPanel(QWidget):
@@ -136,7 +182,29 @@ class LayerPanel(QWidget):
         
 
         
-        self._btn_delete = QPushButton("−")
+        
+        # Move Up
+        self._btn_up = QPushButton("▲")
+        self._btn_up.setToolTip("Move Up")
+        self._btn_up.setMaximumWidth(30)
+        self._btn_up.clicked.connect(self._on_move_up_clicked)
+        btn_layout.addWidget(self._btn_up)
+
+        # Move Down
+        self._btn_down = QPushButton("▼")
+        self._btn_down.setToolTip("Move Down")
+        self._btn_down.setMaximumWidth(30)
+        self._btn_down.clicked.connect(self._on_move_down_clicked)
+        btn_layout.addWidget(self._btn_down)
+        
+        # Duplicate
+        self._btn_dup = QPushButton("⧉") # Copy symbol
+        self._btn_dup.setToolTip("Duplicate (Ctrl+D)")
+        self._btn_dup.setMaximumWidth(30)
+        self._btn_dup.clicked.connect(self._on_duplicate_clicked)
+        btn_layout.addWidget(self._btn_dup)
+
+        self._btn_delete = QPushButton("🗑") # Trash can
         self._btn_delete.setToolTip("Delete selected (Del)")
         self._btn_delete.setMaximumWidth(30)
         self._btn_delete.clicked.connect(self._on_delete_clicked)
@@ -156,6 +224,14 @@ class LayerPanel(QWidget):
         
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
+        
+        # Shortcuts
+        from PyQt6.QtGui import QShortcut, QKeySequence
+        
+        # Delete shortcut attached to tree view to ensure it catches context
+        # Delete shortcut removed (handled globally by MainWindow)
+        # self._del_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self._tree_view)
+        # self._del_shortcut.activated.connect(self._on_delete_clicked)
     
     def _connect_signals(self) -> None:
         """Connect model and view signals."""
@@ -225,29 +301,12 @@ class LayerPanel(QWidget):
             
             menu.addSeparator()
             
-            # Visibility toggle
-            if element and element.visible:
-                action_hide = menu.addAction("Hide")
-                action_hide.triggered.connect(
-                    lambda: self._toggle_visibility(element_id)
-                )
-            else:
-                action_show = menu.addAction("Show")
-                action_show.triggered.connect(
-                    lambda: self._toggle_visibility(element_id)
-                )
+            # Move Up/Down
+            action_up = menu.addAction("Move Up")
+            action_up.triggered.connect(self._on_move_up_clicked)
             
-            # Lock toggle
-            if element and element.locked:
-                action_unlock = menu.addAction("Unlock")
-                action_unlock.triggered.connect(
-                    lambda: self._toggle_lock(element_id)
-                )
-            else:
-                action_lock = menu.addAction("Lock")
-                action_lock.triggered.connect(
-                    lambda: self._toggle_lock(element_id)
-                )
+            action_down = menu.addAction("Move Down")
+            action_down.triggered.connect(self._on_move_down_clicked)
             
             menu.addSeparator()
             
@@ -277,53 +336,175 @@ class LayerPanel(QWidget):
     
     def _toggle_visibility(self, element_id: str) -> None:
         """Toggle element visibility."""
+        # Use existing command infrastructure
         element = self._model.get_element(element_id)
         if element:
-            self._model.set_element_property(element_id, "visible", not element.visible)
+            from theme_editor.commands.undo_commands import ChangePropertyCommand
+            cmd = ChangePropertyCommand(
+                self._model, element_id, "visible", 
+                element.visible, not element.visible
+            )
+            self._undo_stack.push(cmd)
     
     def _toggle_lock(self, element_id: str) -> None:
         """Toggle element lock state."""
         element = self._model.get_element(element_id)
         if element:
-            self._model.set_element_property(element_id, "locked", not element.locked)
+            from theme_editor.commands.undo_commands import ChangePropertyCommand
+            cmd = ChangePropertyCommand(
+                self._model, element_id, "locked", 
+                element.locked, not element.locked
+            )
+            self._undo_stack.push(cmd)
     
+    def _on_move_up_clicked(self) -> None:
+        """Move selected element up."""
+        indexes = self._tree_view.selectedIndexes()
+        if not indexes: return
+        # Taking just the first one for simplicity or we iterate
+        idx = indexes[0]
+        eid = idx.data(ThemeModel.ElementIdRole)
+        
+        # Calculate new index
+        current_row = idx.row()
+        if current_row > 0:
+            new_row = current_row - 1
+            parent_id = idx.parent().internalPointer() if idx.parent().isValid() else None
+            
+            from theme_editor.commands.undo_commands import ReorderElementCommand
+            self._undo_stack.push(ReorderElementCommand(
+                self._model, eid, parent_id, new_row
+            ))
+            # Restore selection
+            self.select_elements([eid])
 
+    def _on_move_down_clicked(self) -> None:
+        """Move selected element down."""
+        indexes = self._tree_view.selectedIndexes()
+        if not indexes: return
+        idx = indexes[0]
+        eid = idx.data(ThemeModel.ElementIdRole)
+        
+        # Calculate new index
+        current_row = idx.row()
+        total_rows = self._model.rowCount(idx.parent())
+        if current_row < total_rows - 1:
+            new_row = current_row + 1
+            parent_id = idx.parent().internalPointer() if idx.parent().isValid() else None
+            
+            from theme_editor.commands.undo_commands import ReorderElementCommand
+            self._undo_stack.push(ReorderElementCommand(
+                self._model, eid, parent_id, new_row
+            ))
+            self.select_elements([eid])
     
     def _on_delete_clicked(self) -> None:
         """Delete selected elements (skips protected background elements)."""
         indexes = self._tree_view.selectedIndexes()
-        for idx in reversed(indexes):
-            element_id = idx.data(ThemeModel.ElementIdRole)
-            if element_id:
-                element = self._model.get_element(element_id)
-                # Skip protected background elements
-                if isinstance(element, (BackgroundImageElement, BackgroundVideoElement)):
-                    logger.debug(f"Skipping delete for protected element: {element.name}")
-                    continue
-                self._model.remove_element(element_id)
+        if not indexes:
+            return
+            
+        # Sort by row reverse to preserve indices logic during deletion (safest policy)
+        sorted_indexes = sorted(indexes, key=lambda idx: idx.row(), reverse=True)
+        
+        # Filter valid deletions and unique IDs
+        to_delete = []
+        seen = set()
+        
+        for idx in sorted_indexes:
+            eid = idx.data(ThemeModel.ElementIdRole)
+            if eid and eid not in seen:
+                element = self._model.get_element(eid)
+                if element and not isinstance(element, (BackgroundImageElement, BackgroundVideoElement)):
+                    to_delete.append(eid)
+                    seen.add(eid)
+        
+        if not to_delete:
+            return
+
+        # Use a macro for multiple deletes
+        if len(to_delete) > 1:
+            self._undo_stack.beginMacro("Delete Elements")
+            
+        from theme_editor.commands.undo_commands import DeleteElementCommand
+        
+        for eid in to_delete:
+            self._undo_stack.push(DeleteElementCommand(self._model, eid))
+        
+        if len(to_delete) > 1:
+            self._undo_stack.endMacro()
     
     def _on_duplicate_clicked(self) -> None:
         """Duplicate selected elements."""
-        # TODO: Implement duplication with undo command
-        logger.debug("Duplicate not yet implemented")
+        indexes = self._tree_view.selectedIndexes()
+        element_ids = list(set(
+            idx.data(ThemeModel.ElementIdRole)
+            for idx in indexes
+            if idx.data(ThemeModel.ElementIdRole)
+        ))
+        
+        if not element_ids:
+            return
+            
+        if len(element_ids) > 1:
+            self._undo_stack.beginMacro("Duplicate Elements")
+            
+        from theme_editor.commands.undo_commands import DuplicateElementCommand
+        
+        for eid in element_ids:
+            if self._model.get_element(eid):
+                self._undo_stack.push(DuplicateElementCommand(self._model, eid))
+        
+        if len(element_ids) > 1:
+            self._undo_stack.endMacro()
     
     def _on_group_clicked(self) -> None:
         """Group selected elements."""
-        # TODO: Implement grouping with undo command
-        logger.debug("Group not yet implemented")
+        indexes = self._tree_view.selectedIndexes()
+        if not indexes:
+            return
+            
+        element_ids = list(set(
+            idx.data(ThemeModel.ElementIdRole)
+            for idx in indexes
+            if idx.data(ThemeModel.ElementIdRole)
+        ))
+        
+        if not element_ids:
+            return
+            
+        from theme_editor.commands.undo_commands import GroupElementsCommand
+        self._undo_stack.push(GroupElementsCommand(self._model, element_ids))
     
     def _on_ungroup_clicked(self) -> None:
         """Ungroup selected group."""
-        # TODO: Implement ungrouping with undo command
-        logger.debug("Ungroup not yet implemented")
-    
-    def keyPressEvent(self, event) -> None:
-        """Handle keyboard shortcuts."""
-        if event.key() == Qt.Key.Key_Delete:
-            self._on_delete_clicked()
-        elif event.key() == Qt.Key.Key_F2:
-            index = self._tree_view.currentIndex()
-            if index.isValid():
-                self._tree_view.edit(index)
-        else:
-            super().keyPressEvent(event)
+        indexes = self._tree_view.selectedIndexes()
+        element_ids = list(set(
+            idx.data(ThemeModel.ElementIdRole)
+            for idx in indexes
+            if idx.data(ThemeModel.ElementIdRole)
+        ))
+        
+        if not element_ids:
+            return
+            
+        # Collect groups
+        groups_to_ungroup = []
+        for eid in element_ids:
+            elem = self._model.get_element(eid)
+            if elem and elem.element_type == ElementType.GROUP:
+                groups_to_ungroup.append(eid)
+        
+        if not groups_to_ungroup:
+            return
+
+        if len(groups_to_ungroup) > 1:
+            self._undo_stack.beginMacro("Ungroup Elements")
+            
+        from theme_editor.commands.undo_commands import UngroupElementsCommand
+        
+        for gid in groups_to_ungroup:
+            self._undo_stack.push(UngroupElementsCommand(self._model, gid))
+
+        if len(groups_to_ungroup) > 1:
+            self._undo_stack.endMacro()

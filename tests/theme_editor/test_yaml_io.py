@@ -3,11 +3,8 @@
 Unit tests for theme_editor.utils.yaml_io module.
 """
 
-import pytest
 from pathlib import Path
-from unittest.mock import patch, mock_open
 import tempfile
-import shutil
 
 from theme_editor.utils.yaml_io import ThemeYamlIO
 
@@ -62,9 +59,10 @@ class TestV1ToV2Conversion:
         
         v2 = io._convert_v1_to_v2(v1)
         
-        # Background image is now in ui_elements
-        bg = next(e for e in v2["ui_elements"] if e["type"] == "background_image")
-        assert bg["path"] == "bg.png"
+        # Background image is now in static_images
+        assert "static_images" in v2
+        assert "BACKGROUND" in v2["static_images"]
+        assert v2["static_images"]["BACKGROUND"]["PATH"] == "bg.png"
     
     def test_convert_video_background(self):
         """Test converting video background."""
@@ -79,9 +77,10 @@ class TestV1ToV2Conversion:
         
         v2 = io._convert_v1_to_v2(v1)
         
-        # Video background is now in ui_elements
-        bv = next(e for e in v2["ui_elements"] if e["type"] == "background_video")
-        assert bv["enabled"] is True
+        # Video background is now in video_background dict
+        assert "video_background" in v2
+        bv = v2["video_background"]
+        assert bv["ENABLE"] is True
     
     def test_convert_static_images(self):
         """Test converting static images to ui_elements."""
@@ -95,10 +94,11 @@ class TestV1ToV2Conversion:
         
         v2 = io._convert_v1_to_v2(v1)
         
-        # 3 elements: background_video, background_image, and LOGO
-        assert len(v2["ui_elements"]) == 3
+        # 1 element: LOGO in ui_elements. Background is in static_images.
+        # Note: ui_elements might be empty list or contain just LOGO
+        assert len(v2["ui_elements"]) == 1
         
-        logo = next(e for e in v2["ui_elements"] if e["name"] == "LOGO")
+        logo = v2["ui_elements"][0]
         assert logo["type"] == "image"
         assert logo["path"] == "logo.png"
         assert logo["x"] == 10
@@ -122,8 +122,8 @@ class TestV1ToV2Conversion:
         
         v2 = io._convert_v1_to_v2(v1)
         
-        # 3 elements: background_video, background_image, and TITLE
-        assert len(v2["ui_elements"]) == 3
+        # 1 element: TITLE. Backgrounds stored separately now.
+        assert len(v2["ui_elements"]) == 1
         
         text = next(e for e in v2["ui_elements"] if e["name"] == "TITLE")
         assert text["type"] == "text"
@@ -142,8 +142,8 @@ class TestV1ToV2Conversion:
         
         v2 = io._convert_v1_to_v2(v1)
         
-        # 2 default background elements + 2 passed through
-        assert len(v2["ui_elements"]) == 4
+        # 2 passed through. Backgrounds stored separately now.
+        assert len(v2["ui_elements"]) == 2
         assert any(e["type"] == "rectangle" for e in v2["ui_elements"])
         assert any(e["type"] == "circle" for e in v2["ui_elements"])
     
@@ -201,13 +201,12 @@ class TestV2ToV1Conversion:
         """Test converting background_image element to BACKGROUND image."""
         io = ThemeYamlIO()
         v2 = {
-            "ui_elements": [
-                {
-                    "type": "background_image",
-                    "name": "Background Image",
-                    "path": "custom_bg.png",
+            "static_images": {
+                "BACKGROUND": {
+                    "PATH": "custom_bg.png",
+                    "X": 0, "Y": 0
                 }
-            ]
+            }
         }
         
         v1 = io._convert_v2_to_v1(v2)
@@ -373,8 +372,10 @@ class TestCopyExternalAssets:
         v2_data = {
             "author": "Peter",
             "display": {"DISPLAY_SIZE": "5\""},
+            "static_images": {
+                "BACKGROUND": {"PATH": "test_source.png"}
+            },
             "ui_elements": [
-                {"type": "background_image", "path": "test_source.png"},
                 {"type": "image", "name": "BakeMe", "path": "images/bake_source.png"},
                 {"type": "text", "name": "StaticText", "text": "Hello"}
             ],

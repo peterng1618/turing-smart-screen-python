@@ -96,7 +96,7 @@ class LcdComm(ABC):
                     "Cannot find COM port automatically, please run Configuration again and select COM port manually")
                 try:
                     sys.exit(0)
-                except:
+                except:  # noqa: E722
                     os._exit(0)
             else:
                 logger.debug(f"Auto detected COM port: {self.com_port}")
@@ -109,7 +109,7 @@ class LcdComm(ABC):
             logger.error(f"Cannot open COM port {self.com_port}: {e}")
             try:
                 sys.exit(0)
-            except:
+            except:  # noqa: E722
                 os._exit(0)
 
     def closeSerial(self):

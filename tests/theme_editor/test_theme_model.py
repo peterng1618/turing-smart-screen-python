@@ -11,8 +11,7 @@ from PyQt6.QtCore import Qt
 
 from theme_editor.models.theme_model import ThemeModel
 from theme_editor.models.element import (
-    Element, ElementType, create_element,
-    RectangleElement, TextElement, GroupElement
+    ElementType, create_element
 )
 
 
@@ -270,12 +269,13 @@ class TestThemeOperations:
         """Test creating new theme with default structure."""
         model.create_new("test_theme")
         
-        # Should have 4 root groups: Background Video, Background Image, UI Elements, Dynamic Elements
-        assert model.rowCount() == 4
+        # Should have 5 root groups: Theme Info, Background Video, Background Image, UI Elements, Dynamic Elements
+        assert model.rowCount() == 5
         
         roots = model.get_root_elements()
         names = [elem.name for elem in roots]
         
+        assert "Theme Info" in names
         assert "Background Video" in names
         assert "Background Image" in names
         assert "UI Elements" in names
@@ -298,7 +298,8 @@ class TestThemeOperations:
         data = model.to_data()
         
         assert "display" in data
-        assert "background" in data
+        assert "static_images" in data
+        assert "BACKGROUND" in data["static_images"]
         assert "ui_elements" in data
         assert "dynamic_elements" in data
         assert len(data["ui_elements"]) == 1

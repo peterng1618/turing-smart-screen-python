@@ -30,7 +30,6 @@ import logging
 import os
 import platform
 import subprocess
-from pathlib import Path
 import sys
 import time
 import gc
@@ -38,12 +37,12 @@ import gc
 try:
     import tkinter
     from PIL import ImageTk, Image
-except:
+except:  # noqa: E722
     print(
         "[ERROR] Tkinter dependency not installed. Please follow troubleshooting page: https://github.com/mathoudebine/turing-smart-screen-python/wiki/Troubleshooting#all-os-tkinter-dependency-not-installed")
     try:
         sys.exit(0)
-    except:
+    except:  # noqa: E722
         os._exit(0)
 
 if len(sys.argv) != 2:
@@ -55,7 +54,7 @@ if len(sys.argv) != 2:
     print("        theme-editor.py Cyberpunk")
     try:
         sys.exit(0)
-    except:
+    except:  # noqa: E722
         os._exit(0)
 
 import library.log
@@ -181,7 +180,7 @@ if __name__ == "__main__":
         logger.debug("Exit Theme Editor...")
         try:
             sys.exit(0)
-        except:
+        except:  # noqa: E722
             os._exit(0)
 
 

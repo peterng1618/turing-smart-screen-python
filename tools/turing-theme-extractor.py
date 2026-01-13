@@ -38,7 +38,7 @@ if len(sys.argv) != 2:
     print("        turing-theme-extractor.py NZXT_BLUR.data")
     try:
         sys.exit(0)
-    except:
+    except:  # noqa: E722
         os._exit(0)
 
 found_png = 0
