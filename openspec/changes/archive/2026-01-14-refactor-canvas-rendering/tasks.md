@@ -1,0 +1,27 @@
+# Tasks
+
+- [x] Create `library/rendering` package <!-- id: 0 -->
+    - [x] Create `library/rendering/__init__.py`
+    - [x] Create `library/rendering/text.py` for pure text rendering functions (with supersampling)
+    - [x] Create `library/rendering/graphs.py` for pure graph/chart rendering functions
+    - [x] Create `library/rendering/shapes.py` for pure shape rendering functions (rounded polygons, shearing)
+    - [x] Create `library/rendering/icons.py` for FontAwesome icon rendering
+    - [x] Create `library/rendering/effects.py` for centralized styling effects
+- [x] Create Unit Tests for new package <!-- id: 1 -->
+    - [x] `tests/unit/test_rendering_text.py`
+    - [x] `tests/unit/test_rendering_graphs.py`
+    - [x] `tests/unit/test_rendering_shapes.py`
+    - [x] `tests/unit/test_rendering_image.py`
+- [x] Refactor render paths in `Display`, `UiRenderer`, and `Stats` <!-- id: 2 -->
+    - [x] Refactor `UiRenderer.draw_shape_to_image` to use `rendering.shapes`
+    - [x] Refactor `UiRenderer.draw_text_to_image` to use `rendering.text`
+    - [x] Refactor `UiRenderer.draw_icon_to_image` to use `rendering.icons`
+    - [x] Refactor `Stats.stats` to use Unified Rendering flow
+    - [x] REMOVE generic shape/line/icon drawing methods from `LcdComm`
+- [x] Create Integration Tests <!-- id: 3 -->
+    - [x] `tests/integration/test_display_regression.py`: Verified visual parity
+- [x] Create Smoke Tests <!-- id: 4 -->
+    - [x] `tests/smoke/test_theme_load.py`: Verified complex themes load without crash
+- [x] Manual Verification <!-- id: 5 -->
+    - [x] Verified shearing and triangles in Theme Editor preview
+    - [x] Verified FontAwesome icon support with outlines

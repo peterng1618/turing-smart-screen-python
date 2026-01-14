@@ -9,11 +9,8 @@ class BackgroundSection(PropertySection):
         super().__init__("Background Settings", editor_state, theme_model, parent)
         
     def _setup_ui(self) -> None:
-        self._main_layout = QVBoxLayout(self)
-        
         # Source Row
         source_layout = QHBoxLayout()
-        source_layout.addWidget(QLabel("Source:"))
         self._path_edit = QLineEdit()
         self._path_edit.setReadOnly(True)
         self._path_edit.setStyleSheet("background: #333;")
@@ -23,7 +20,7 @@ class BackgroundSection(PropertySection):
         self._browse_btn.setFixedWidth(32)
         self._browse_btn.clicked.connect(self._pick_source)
         source_layout.addWidget(self._browse_btn)
-        self._main_layout.addLayout(source_layout)
+        self._layout.addRow("Source:", source_layout)
         
         # Video Processing Group
         self._video_group = QGroupBox("Video Processing")
@@ -49,7 +46,7 @@ class BackgroundSection(PropertySection):
         self._v_fade.valueChanged.connect(lambda v: self._emit_property_changed("loop_fade_duration", v))
         self._video_form.addRow("Loop Fade:", self._v_fade)
         
-        self._main_layout.addWidget(self._video_group)
+        self._layout.addRow(self._video_group)
 
     def update_widgets(self, element: Element) -> None:
         if isinstance(element, BackgroundImageElement):

@@ -921,7 +921,7 @@ class ThemeModel(QAbstractItemModel):
             parent_elem = self._elements.get(parent_id)
             parent_index = self._get_index_for_element(parent_id)
             
-            self.beginInsertRows(parent_model_index, index, index)
+            self.beginInsertRows(parent_index, index, index)
             parent_elem.children.insert(index, new_root.id)
             self.endInsertRows()
         else:

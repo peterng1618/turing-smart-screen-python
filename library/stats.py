@@ -29,7 +29,7 @@ import os
 import platform
 import sys
 import time
-from typing import List
+from typing import Tuple, List, Optional, Dict, Union, Any
 
 import babel.dates
 import requests
@@ -1075,23 +1075,15 @@ class DynamicText:
             if not img:
                 continue
 
-            # We need a canvas to apply styling (shadows/rotations can exceed img bounds)
-            # Create a localized canvas or just use a full screen one?
-            # Creating a full screen canvas for every dynamic text might be slow.
-            # But let's see: UiRenderer.apply_element_styling expects a canvas.
+            # Apply styling (rotation, shadow, opacity)
+            opacity = styled_config.get('opacity', 1.0)
+            angle = styled_config.get('angle', styled_config.get('rotation', 0))
+            shadow_config = styled_config.get('shadow')
+            if shadow_config and 'color' in shadow_config:
+                shadow_config = shadow_config.copy()
+                shadow_config['color'] = renderer._resolve_color(shadow_config['color'])
+
+            import library.rendering.effects as rendering_effects
+            styled_img, dx, dy = rendering_effects.apply_styling(img, opacity, angle, shadow_config)
             
-            # Calculate a safe canvas size that handles rotation and shadow
-            # For simplicity, let's use a sub-canvas that is large enough
-            pad = 100 # Safe padding for rotation/shadow
-            cw, ch = img.width + pad*2, img.height + pad*2
-            temp_canvas = Image.new('RGBA', (cw, ch), (0, 0, 0, 0))
-            
-            renderer.apply_element_styling(temp_canvas, img, pad, pad, styled_config)
-            
-            # Crop to content to get the final styled image and its offset
-            bbox = temp_canvas.getbbox()
-            if bbox:
-                final_styled_img = temp_canvas.crop(bbox)
-                final_x = x + bbox[0] - pad
-                final_y = y + bbox[1] - pad
-                display.lcd.DisplayPILImage(final_styled_img, int(final_x), int(final_y))
+            display.lcd.DisplayPILImage(styled_img, int(x + dx), int(y + dy))

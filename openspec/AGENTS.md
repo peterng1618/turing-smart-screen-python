@@ -11,6 +11,7 @@ Instructions for AI coding assistants using OpenSpec for spec-driven development
 - Write deltas: use `## ADDED|MODIFIED|REMOVED|RENAMED Requirements`; include at least one `#### Scenario:` per requirement
 - Validate: `openspec validate [change-id] --strict` and fix issues
 - Request approval: Do not start implementation until proposal is approved
+- When user ask for fix or change , look for relevant openspec feature tasks and update it. When finished task, mark it complete
 
 ## Three-Stage Workflow
 
@@ -405,11 +406,11 @@ Only add complexity with:
 
 ## Tool Selection Guide
 
-| Task | Tool | Why |
-|------|------|-----|
-| Find files by pattern | Glob | Fast pattern matching |
-| Search code content | Grep | Optimized regex search |
-| Read specific files | Read | Direct file access |
+| Task                  | Tool | Why                      |
+| --------------------- | ---- | ------------------------ |
+| Find files by pattern | Glob | Fast pattern matching    |
+| Search code content   | Grep | Optimized regex search   |
+| Read specific files   | Read | Direct file access       |
 | Explore unknown scope | Task | Multi-step investigation |
 
 ## Error Recovery

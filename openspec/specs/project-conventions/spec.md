@@ -4,12 +4,16 @@
 TBD - created by archiving change add-linter. Update Purpose after archive.
 ## Requirements
 ### Requirement: Code Quality Enforcement
-The project SHALL use automated tools to enforce code quality.
+The project SHALL use `ruff` to enforce code quality and stylistic consistency.
 
-#### Scenario: Running Linter
-- **WHEN** a developer runs the lint command (e.g., `pylint .`)
-- **THEN** it MUST check all Python files for syntax errors, coding standards violations, and potential bugs
-- **AND** report them according to the project's configuration
+#### Scenario: Running Ruff Linter
+- **WHEN** a developer runs `ruff check .`
+- **THEN** it MUST check all Python files for syntax errors (E9), logic bugs (F), and style violations (E).
+- **AND** it MUST respect component-specific exclusions defined in `pyproject.toml`.
+
+#### Scenario: Running Ruff Formatter
+- **WHEN** a developer runs `ruff format .`
+- **THEN** it MUST reformat code to match the project's line length (120) and indent style (4 spaces).
 
 ### Requirement: Architecture-Aware Linting
 The linter configuration SHALL apply rules contextually based on the component architecture.

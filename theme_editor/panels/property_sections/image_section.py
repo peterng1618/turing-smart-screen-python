@@ -10,8 +10,6 @@ class ImageSection(PropertySection):
         super().__init__("Image Source", editor_state, theme_model, parent)
         
     def _setup_ui(self) -> None:
-        self._layout = QVBoxLayout(self)
-        
         # Current path
         path_layout = QHBoxLayout()
         self._path_label = QLabel()
@@ -24,7 +22,7 @@ class ImageSection(PropertySection):
         browse_btn.clicked.connect(self._pick_image)
         path_layout.addWidget(browse_btn)
         
-        self._layout.addLayout(path_layout)
+        self._layout.addRow(path_layout)
         
     def update_widgets(self, element: Element) -> None:
         if isinstance(element, ImageElement):

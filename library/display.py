@@ -357,6 +357,9 @@ class Display:
                     align=config.THEME_DATA['static_text'][text].get("ALIGN", "left"),
                     anchor=config.THEME_DATA['static_text'][text].get("ANCHOR", "lt"),
                     opacity=config.THEME_DATA['static_text'][text].get("OPACITY", 1.0),
+                    rotation=config.THEME_DATA['static_text'][text].get("ROTATION", 0),
+                    shadow=config.THEME_DATA['static_text'][text].get("SHADOW"),
+                    outline=config.THEME_DATA['static_text'][text].get("OUTLINE"),
                 )
 
 

@@ -1,11 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import os
+from typing import Tuple, Dict, Optional, List, Union, Any
 import math
-from PIL import Image, ImageDraw, ImageFilter, ImageColor, ImageFont
+from PIL import Image, ImageDraw, ImageColor
 
 from library.log import logger
-from library import config # We need config to access FONTS_DIR if needed or pass it in
+from library import config
 from library.font_manager import font_manager
+import library.rendering.shapes as rendering_shapes
+import library.rendering.text as rendering_text
+import library.rendering.icons as rendering_icons
+import library.rendering.effects as rendering_effects
 
 class UiRenderer:
     def __init__(self, theme_data, theme_path):
@@ -76,124 +81,9 @@ class UiRenderer:
              color = (color[0], color[1], color[2], int(override_alpha))
         return color
 
-    def _create_shadow_layer(self, shape_img, shadow_config):
-        """Create a shadow layer from the shape image, handling expanding blur."""
-        if not shadow_config: return None
-        blur = shadow_config.get('blur', 5)
-        color = self._resolve_color(shadow_config.get('color', 'black'))
-        offset_x = shadow_config.get('offset_x', 5)
-        offset_y = shadow_config.get('offset_y', 5)
-        
-        # Original mask
-        mask = shape_img.split()[3]
-        
-        # Calculate padding needed for blur to spread
-        # 3 sigma is good rule of thumb for Gaussian
-        padding = int(blur * 3) if blur > 0 else 0
-        
-        new_w = shape_img.width + padding * 2
-        new_h = shape_img.height + padding * 2
-        
-        # Create a large mask canvas
-        # 1. Place original alpha in center
-        expanded_mask = Image.new('L', (new_w, new_h), 0)
-        expanded_mask.paste(mask, (padding, padding))
-        
-        # 2. Blur the mask
-        if blur > 0:
-            expanded_mask = expanded_mask.filter(ImageFilter.GaussianBlur(blur))
-            
-        # 3. Create shadow block with this alpha
-        shadow = Image.new('RGBA', (new_w, new_h), color)
-        shadow.putalpha(expanded_mask)
-        
-        # Adjust offset because we added padding to the top-left (so we must shift "draw" position left/up)
-        return shadow, offset_x - padding, offset_y - padding
 
-    def _apply_image_outline(self, img, outline_config):
-        """
-        Apply an outline (stroke) to an image by dilating its alpha channel.
-        Returns a new image (larger by 2*width) with the outline composited behind.
-        """
-        if not outline_config: return img, 0, 0
-        
-        width = outline_config.get('width', 0)
-        if width <= 0: return img, 0, 0
-        
-        color = self._resolve_color(outline_config.get('color', 'white'))
-        
-        # Dilation kernel size. 
-        # width=1 -> 1px expansion on all sides? 
-        # MaxFilter w/ size=3 (radius 1) examines 1 pixel around.
-        # size = w*2 + 1
-        filter_size = width * 2 + 1
-        
-        # Expand canvas to fit outline
-        # We need padding = width
-        padding = width
-        new_w = img.width + padding * 2
-        new_h = img.height + padding * 2
-        
-        # Create padded mask
-        mask = img.split()[3]
-        expanded_mask = Image.new('L', (new_w, new_h), 0)
-        expanded_mask.paste(mask, (padding, padding))
-        
-        # Dilate (Grow) the mask
-        # MaxFilter is square. For small widths this is fine.
-        # For rounded dilation, we might chain filters or use a different approach, 
-        # but MaxFilter is standard for simple "Stroke" effects in PIL.
-        outline_mask = expanded_mask.filter(ImageFilter.MaxFilter(filter_size))
-        
-        # Create outline layer
-        outline_layer = Image.new('RGBA', (new_w, new_h), color)
-        outline_layer.putalpha(outline_mask)
-        
-        # Paste original image on top
-        # We assume original image is "foreground"
-        # Since we just want the outline sticking out, we composite:
-        # Result = Outline over Empty, then Original over Result.
-        
-        # Just paste original? Alpha composite is safer for semi-transparent pixels in original.
-        # Create a temp image for original placed in center
-        fg = Image.new('RGBA', (new_w, new_h), (0,0,0,0))
-        fg.paste(img, (padding, padding))
-        
-        # Composite: Outline is background, FG is foreground
-        # But wait, outline_layer is full block. We only want outline visible where FG is transparent?
-        # Standard stroke usually is drawn *behind* the object. So opacity in the object reveals the stroke?
-        # Usually yes. If object is semi-transparent, stroke shows through.
-        
-        final_img = Image.alpha_composite(outline_layer, fg)
-        
-        return final_img, padding, padding
 
-    def _get_intersection(self, p1, p2, p3, p4):
-        """Find intersection of two lines: p1-p2 and p3-p4."""
-        x1, y1 = p1
-        x2, y2 = p2
-        x3, y3 = p3
-        x4, y4 = p4
-        
-        denom = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1)
-        if abs(denom) < 1e-9:
-            return None # Parallel
-        
-        ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denom
-        return (x1 + ua * (x2 - x1), y1 + ua * (y2 - y1))
 
-    def _normalize_winding(self, vertices):
-        """Ensure convex polygon vertices are in Clockwise (CW) order (Y-down coordinates)."""
-        # Shoelace formula: sum (x2-x1)(y2+y1). 
-        # Area < 0 is CW, Area > 0 is CCW in Y-down screen coordinates.
-        area = 0
-        for i in range(len(vertices)):
-            p1 = vertices[i]
-            p2 = vertices[(i + 1) % len(vertices)]
-            area += (p2[0] - p1[0]) * (p2[1] + p1[1])
-        if area > 0:
-            return list(reversed(vertices))
-        return list(vertices)
 
     def _get_rounded_polygon_path(self, vertices, radius):
         """Calculate high-precision path for a rounded convex polygon."""
@@ -308,15 +198,7 @@ class UiRenderer:
         if is_dash and len(dash_pts) > 1:
             draw.line(dash_pts, fill=color, width=width, joint='curve')
 
-    def _draw_rounded_polygon(self, draw, vertices, radius, fill=None, outline=None, width=1, dash_array=None):
-        """Draw a convex polygon with rounded corners."""
-        poly_points = self._get_rounded_polygon_path(vertices, radius)
-        if fill: draw.polygon(poly_points, fill=fill)
-        if outline and width > 0:
-            if dash_array:
-                self._draw_dashed_path(draw, poly_points, width, outline, dash_array, closed=True)
-            else:
-                draw.line(poly_points + [poly_points[0]], fill=outline, width=width, joint='curve')
+
 
     def _draw_dashed_line(self, draw, p1, p2, width, color, dash_array, cap='butt'):
         """
@@ -363,23 +245,11 @@ class UiRenderer:
             
             current_dist += dash_len + gap_len
 
-    def draw_shape_to_image(self, shape_config):
+    def draw_shape_to_image(self, shape_config: dict) -> Tuple[Image.Image, Tuple[int, int]]:
+        """Render a shape to an RGBA image using the rendering library."""
         shape_type = shape_config.get('type')
-        if not shape_type: return None, (0,0)
+        if not shape_type: return None, (0, 0)
 
-        x = shape_config.get('x', 0)
-        y = shape_config.get('y', 0)
-        w = shape_config.get('width', 0)
-        h = shape_config.get('height', 0)
-        x2 = shape_config.get('x2', 0)
-        y2 = shape_config.get('y2', 0)
-        
-        if shape_type == 'circle':
-            shape_type = 'ellipse'
-            radius = shape_config.get('radius')
-            if radius: w, h = radius*2, radius*2
-            else: w = h = max(w, h)
-        
         fill_color = self._resolve_color(shape_config.get('color', (255, 255, 255)), shape_config.get('alpha'))
         
         # --- Parse Outline Config ---
@@ -392,270 +262,58 @@ class UiRenderer:
                     'width': shape_config.get('outline_width', 0),
                     'dash_array': shape_config.get('dash_array'),
                     'style': shape_config.get('style'),
-                    'cap': shape_config.get('end_cap', 'butt') # Inherit main cap for legacy lines
+                    'cap': shape_config.get('end_cap', 'butt')
                 }
         
-        # Supersampling factor for anti-aliasing (applied to all shapes)
-        sampling = 4
-        
-        outline_color_raw = outline_cfg.get('color')
-        outline_width = outline_cfg.get('width', 0) or 0
-        resolved_outline = self._resolve_color(outline_color_raw) if outline_color_raw else None
-        
-        # Dash support
-        dash_array = outline_cfg.get('dash_array') 
-        if not dash_array:
+        if outline_cfg and 'color' in outline_cfg:
+            outline_cfg = outline_cfg.copy()
+            outline_cfg['color'] = self._resolve_color(outline_cfg['color'])
+
+        # Resolve dash array from style if needed
+        dash_array = outline_cfg.get('dash_array')
+        if outline_cfg and not dash_array:
             style = outline_cfg.get('style')
-            if style == 'dotted': dash_array = [2, 2] 
+            if style == 'dotted': dash_array = [2, 2]
             elif style == 'dashed': dash_array = [10, 5]
-            
-        s_dash_array = [v * sampling for v in dash_array] if dash_array else None
-        outline_cap = outline_cfg.get('cap', 'butt')
+
+        # Extract other parameters
+        outline_color = outline_cfg.get('color', (0, 0, 0, 0))
+        outline_width = outline_cfg.get('width', 0)
+        cap_style = outline_cfg.get('cap', 'butt')
+
+        # Extract other shape-specific parameters
+        w = shape_config.get('width')
+        h = shape_config.get('height')
+        rounding = shape_config.get('rounding', 0)
+        coords = shape_config.get('coords')
+        shear_left = shape_config.get('shear_left', 0)
+        shear_right = shape_config.get('shear_right', 0)
+
+        img, dx, dy = rendering_shapes.render_shape_to_image(
+            type=shape_type,
+            width=w,
+            height=h,
+            fill_color=fill_color,
+            outline_color=outline_color,
+            outline_width=outline_width,
+            rounding=rounding,
+            dash_array=dash_array,
+            cap_style=cap_style,
+            sampling=4,
+            coords=coords,
+            shear_left=shear_left,
+            shear_right=shear_right
+        )
         
-        pad = math.ceil(outline_width / 2) + 1
+        x = shape_config.get('x', 0)
+        y = shape_config.get('y', 0)
         
-        if shape_type == 'line':
-            # Calculate bounds
-            lx = min(x, x2)
-            ly = min(y, y2)
-            lw = abs(x2 - x)
-            lh = abs(y2 - y)
-            
-            # Apply supersampling to line
-            s_lw = lw * sampling
-            s_lh = lh * sampling
-            s_w = w * sampling  # Line width
-            s_outline = outline_width * sampling
-            
-            s_canvas_w = s_lw + s_outline + 20 * sampling
-            s_canvas_h = s_lh + s_outline + 20 * sampling
-            
-            img = Image.new('RGBA', (int(s_canvas_w), int(s_canvas_h)), (0, 0, 0, 0))
-            d = ImageDraw.Draw(img)
-            
-            # Scale offset and points
-            s_offset_x = (lx - 10) * sampling
-            s_offset_y = (ly - 10) * sampling
-            
-            s_p1 = (x * sampling - s_offset_x, y * sampling - s_offset_y)
-            s_p2 = (x2 * sampling - s_offset_x, y2 * sampling - s_offset_y)
-            
-            # Line can have its own end_cap property (legacy) or outline.cap (new)
-            joint = shape_config.get('end_cap', outline_cap)
+        return img, (x + dx, y + dy)
 
-            # Helper to draw line (solid or dashed)
-            def draw_the_line(dr, pt1, pt2, wd, col, dashes, cap_style):
-                if dashes:
-                    self._draw_dashed_line(dr, pt1, pt2, wd, col, dashes, cap_style)
-                else:
-                    dr.line([pt1, pt2], fill=col, width=wd)
-                    if cap_style == 'round':
-                        r = wd / 2
-                        dr.ellipse([pt1[0]-r, pt1[1]-r, pt1[0]+r, pt1[1]+r], fill=col)
-                        dr.ellipse([pt2[0]-r, pt2[1]-r, pt2[0]+r, pt2[1]+r], fill=col)
-            
-            # Draw Outline
-            if resolved_outline:
-                draw_the_line(d, s_p1, s_p2, s_w + (s_outline*2), resolved_outline, s_dash_array, outline_cap)
-
-            # Draw Main
-            draw_the_line(d, s_p1, s_p2, s_w, fill_color, s_dash_array, joint)
-            
-            # Resize down
-            final_w = int(s_canvas_w // sampling)
-            final_h = int(s_canvas_h // sampling)
-            img = img.resize((final_w, final_h), Image.Resampling.LANCZOS)
-            
-            offset_x = lx - 10
-            offset_y = ly - 10
-                
-            return img, (offset_x, offset_y)
-        
-        if shape_type == 'rectangle':
-            # Check for shear (parallelogram effect)
-            shear_left = shape_config.get('shear_left', 0)
-            shear_right = shape_config.get('shear_right', 0)
-            
-            # Legacy 'shear' applies to both edges (creates classic parallelogram)
-            legacy_shear = shape_config.get('shear', 0)
-            if legacy_shear != 0 and shear_left == 0 and shear_right == 0:
-                shear_left = legacy_shear
-                shear_right = legacy_shear # Both rotate same direction for parallelogram
-            
-            # Clamp to valid range (-89 to 89 degrees)
-            shear_left = max(-89, min(89, shear_left))
-            shear_right = max(-89, min(89, shear_right))
-            
-            if shear_left != 0 or shear_right != 0:
-                # Shear rotates an edge around its CENTER (midpoint at h/2).
-                # offset = (half_h) * tan(angle)
-                # target: Positive angle = Clockwise rotation for BOTH edges.
-                # Left edge CW: top moves RIGHT (+), bottom moves LEFT (-)
-                # Right edge CW: top moves RIGHT (+), bottom moves LEFT (-)
-                
-                half_h = h / 2
-                
-                # Displacement at top/bottom from center
-                left_offset = half_h * math.tan(math.radians(shear_left))
-                right_offset = half_h * math.tan(math.radians(shear_right))
-                
-                # Calculate bounding box - need extra width for displaced corners
-                # X-coordinates relative to origin (top-left of un-sheared rect):
-                # TL.x = 0 + left_offset (positive angle -> moves right)
-                # BL.x = 0 - left_offset (positive angle -> moves left)
-                # TR.x = w + right_offset (positive angle -> moves right)
-                # BR.x = w - right_offset (positive angle -> moves left)
-                
-                xs = [left_offset, -left_offset, w + right_offset, w - right_offset]
-                min_x = min(xs)
-                max_x = max(xs)
-                
-                extra_left = max(0, -min_x)
-                total_w = max_x + extra_left + pad * 2
-                total_h = h + pad * 2
-                
-                # Supersampling
-                s_total_w = total_w * sampling
-                s_total_h = total_h * sampling
-                s_w = w * sampling
-                s_h = h * sampling
-                s_outline = outline_width * sampling
-                s_pad = pad * sampling
-                s_extra_left = extra_left * sampling
-                
-                img = Image.new('RGBA', (int(s_total_w), int(s_total_h)), (0, 0, 0, 0))
-                d = ImageDraw.Draw(img)
-                
-                # Scale offsets
-                s_left_off = left_offset * sampling
-                s_right_off = right_offset * sampling
-                
-                # Base position: origin of rectangle in canvas coords
-                origin_x = s_pad + s_extra_left
-                origin_y = s_pad
-                
-                tl = (origin_x + s_left_off, origin_y)
-                tr = (origin_x + s_w + s_right_off, origin_y)
-                br = (origin_x + s_w - s_right_off, origin_y + s_h)
-                bl = (origin_x - s_left_off, origin_y + s_h)
-                
-                s_radius = (shape_config.get('radius', 0) or 0) * sampling
-                
-                # Draw using the new helper which handles both fill and (solid/dashed) outline
-                self._draw_rounded_polygon(d, [tl, tr, br, bl], s_radius, 
-                                         fill=fill_color if fill_color[3] > 0 else None, 
-                                         outline=resolved_outline, 
-                                         width=int(s_outline),
-                                         dash_array=s_dash_array if dash_array else None)
-                
-                img = img.resize((int(s_total_w // sampling), int(s_total_h // sampling)), Image.Resampling.LANCZOS)
-                return img, (x - pad - extra_left, y - pad)
-            
-            # Standard rectangle (no shear)
-            s_radius = (shape_config.get('radius', 0) or 0) * sampling
-            
-            canvas_w = (w + pad * 2) * sampling
-            canvas_h = (h + pad * 2) * sampling
-            
-            img = Image.new('RGBA', (int(canvas_w), int(canvas_h)), (0, 0, 0, 0))
-            d = ImageDraw.Draw(img)
-            
-            s_pad = pad * sampling
-            s_w = w * sampling
-            s_h = h * sampling
-            s_outline = outline_width * sampling
-            
-            # Vertices for a standard rectangle
-            tl = (s_pad, s_pad)
-            tr = (s_pad + s_w, s_pad)
-            br = (s_pad + s_w, s_pad + s_h)
-            bl = (s_pad, s_pad + s_h)
-
-            # Use the unified rounded polygon drawer (handles fill, rounding, and dashes)
-            self._draw_rounded_polygon(d, [tl, tr, br, bl], s_radius, 
-                                     fill=fill_color if fill_color[3] > 0 else None, 
-                                     outline=resolved_outline, 
-                                     width=int(s_outline),
-                                     dash_array=s_dash_array if dash_array else None)
-            
-            img = img.resize((int(canvas_w // sampling), int(canvas_h // sampling)), Image.Resampling.LANCZOS)
-            return img, (x - pad, y - pad)
-
-        elif shape_type == 'ellipse':
-             canvas_w = (w + pad * 2) * sampling
-             canvas_h = (h + pad * 2) * sampling
-             
-             img = Image.new('RGBA', (int(canvas_w), int(canvas_h)), (0, 0, 0, 0))
-             d = ImageDraw.Draw(img)
-             
-             s_pad = pad * sampling
-             s_w = w * sampling
-             s_h = h * sampling
-             s_outline = outline_width * sampling
-             
-             bounds = [s_pad, s_pad, s_pad + s_w, s_pad + s_h]
-             
-             d.ellipse(bounds, fill=fill_color, outline=resolved_outline, width=s_outline)
-             
-             img = img.resize((int(canvas_w // sampling), int(canvas_h // sampling)), Image.Resampling.LANCZOS)
-             return img, (x - pad, y - pad)
-
-        elif shape_type == 'triangle':
-            # Triangle defined by 3 points
-            x1, y1 = shape_config.get('x1', x), shape_config.get('y1', y)
-            x2, y2 = shape_config.get('x2', x), shape_config.get('y2', y)
-            x3, y3 = shape_config.get('x3', x), shape_config.get('y3', y)
-            
-            # Calculate bounding box
-            min_x = min(x1, x2, x3)
-            min_y = min(y1, y2, y3)
-            max_x = max(x1, x2, x3)
-            max_y = max(y1, y2, y3)
-            
-            tri_w = max_x - min_x
-            tri_h = max_y - min_y
-            
-            # Supersampling
-            s_outline = outline_width * sampling
-            s_tri_w = tri_w * sampling
-            s_tri_h = tri_h * sampling
-            s_pad = pad * sampling
-            
-            canvas_w = (tri_w + pad * 2) * sampling
-            canvas_h = (tri_h + pad * 2) * sampling
-            
-            img = Image.new('RGBA', (int(canvas_w), int(canvas_h)), (0, 0, 0, 0))
-            d = ImageDraw.Draw(img)
-            
-            # Scale and offset points
-            def scale_pt(px, py):
-                return ((px - min_x) * sampling + s_pad, (py - min_y) * sampling + s_pad)
-            
-            s_p1 = scale_pt(x1, y1)
-            s_p2 = scale_pt(x2, y2)
-            s_p3 = scale_pt(x3, y3)
-            
-            s_radius = (shape_config.get('radius', 0) or 0) * sampling
-            
-            # Draw using the new helper which handles fill, rounding, and (solid/dashed) outline
-            self._draw_rounded_polygon(d, [s_p1, s_p2, s_p3], s_radius, 
-                                     fill=fill_color if fill_color[3] > 0 else None, 
-                                     outline=resolved_outline, 
-                                     width=int(s_outline),
-                                     dash_array=s_dash_array if dash_array else None)
-            
-            img = img.resize((int(canvas_w // sampling), int(canvas_h // sampling)), Image.Resampling.LANCZOS)
-            return img, (min_x - pad, min_y - pad)
-
-        # Fallback for unknown types
-        return None, (0, 0)
-
-    def draw_text_to_image(self, text_config, sampling=1):
-        """Render text to an RGBA image with optional supersampling."""
+    def draw_text_to_image(self, text_config: dict, sampling: int = 1) -> Tuple[Image.Image, Tuple[int, int]]:
+        """Render text to an RGBA image using the rendering library."""
         text = text_config.get('text', '')
         if not text: return None, (0,0)
-        
-        # Supersampling factor is now a parameter
         
         font_path_rel = text_config.get('font', "roboto/Roboto-Regular.ttf")
         font_path = os.path.join(self.theme_path, font_path_rel)
@@ -664,76 +322,35 @@ class UiRenderer:
                  font_path = os.path.join(config.FONTS_DIR, font_path_rel)
         
         size = text_config.get('size', text_config.get('font_size', 20))
-        s_size = int(size * sampling)
         color = self._resolve_color(text_config.get('color', text_config.get('font_color', 'white')), text_config.get('alpha'))
         
-        try:
-            font = ImageFont.truetype(font_path, s_size)
-        except OSError:
-            logger.warning(f"Could not load font {font_path}, fallback to default")
-            font = ImageFont.load_default()
+        outline_cfg = text_config.get('outline')
+        if outline_cfg:
+            outline_cfg = outline_cfg.copy()
+            outline_cfg['color'] = self._resolve_color(outline_cfg.get('color', 'white'))
 
-        # Calculate size at supersampled scale
-        dummy = Image.new('RGBA', (1,1))
-        draw = ImageDraw.Draw(dummy)
-        
-        try:
-            bbox = draw.textbbox((0, 0), text, font=font)
-            w = bbox[2] - bbox[0]
-            h = bbox[3] - bbox[1]
-            offset_y = bbox[1]
-        except AttributeError:
-            w, h = draw.textsize(text, font=font)
-            offset_y = 0
-
-        # Create image at 4x
-        pad = 5 * sampling
-        img_w = w + pad * 2
-        img_h = h + pad * 2
-        
-        img = Image.new('RGBA', (int(img_w), int(img_h)), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        d.text((pad - bbox[0] if 'bbox' in locals() else pad, pad - bbox[1] if 'bbox' in locals() else pad), 
-               text, font=font, fill=color)
-        
-        # Cropping to content at 4x
-        bbox_crop = img.getbbox()
-        if bbox_crop:
-            img = img.crop(bbox_crop)
-        
-        # Downscale
-        new_w = img.width // sampling
-        new_h = img.height // sampling
-        if new_w > 0 and new_h > 0:
-            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        img, dx, dy = rendering_text.render_text_block(
+            text=text,
+            font_path=font_path,
+            font_size=size,
+            color=color,
+            sampling=sampling,
+            outline_config=outline_cfg
+        )
         
         x = text_config.get('x', 0)
         y = text_config.get('y', 0)
         
-        # Apply outline if configured
-        outline_cfg = text_config.get('outline')
-        if outline_cfg:
-            img, px, py = self._apply_image_outline(img, outline_cfg)
-            # Adjust position to account for padding added by outline
-            x -= px
-            y -= py
+        return img, (x + dx, y + dy)
 
-        return img, (x, y)
-
-    def draw_icon_to_image(self, icon_config, sampling=1):
-        """Render an icon with optional supersampling."""
+    def draw_icon_to_image(self, icon_config: dict, sampling: int = 1) -> Tuple[Image.Image, Tuple[int, int]]:
+        """Render an icon with optional supersampling using the rendering library."""
         icon_val = icon_config.get('icon', '')
-        if not icon_val: return None, (0,0)
+        if not icon_val: return None, (0, 0)
         
-        # 1. Resolve Unicode and Font Link
         auto_unicode, auto_link = font_manager.resolve_icon_metadata(icon_val)
         font_link = icon_config.get('link') or auto_link
         
-        # 2. Determine text character
-        if not auto_unicode and ('http://' in icon_val or 'https://' in icon_val):
-            logger.warning(f"Could not resolve icon from URL: {icon_val}")
-            return None, (0,0)
-            
         final_hex = auto_unicode or icon_val
         if len(final_hex) >= 4 and all(c in '0123456789abcdefABCDEF' for c in final_hex):
             try:
@@ -743,7 +360,6 @@ class UiRenderer:
         else:
             text = final_hex
 
-        # 3. Font resolution
         if font_link:
             font_path = font_manager.get_font_path(font_link)
         else:
@@ -752,84 +368,43 @@ class UiRenderer:
                 font_path = os.path.join(config.FONTS_DIR, 'roboto/Roboto-Regular.ttf')
 
         size = icon_config.get('size', icon_config.get('font_size', 40))
-        s_size = int(size * sampling)
         color = self._resolve_color(icon_config.get('color', 'white'), icon_config.get('alpha'))
         
-        try:
-            font = ImageFont.truetype(font_path, s_size)
-        except OSError:
-            logger.warning(f"Could not load icon font {font_path}")
-            return None, (0,0)
+        outline_cfg = icon_config.get('outline')
+        if outline_cfg:
+            outline_cfg = outline_cfg.copy()
+            outline_cfg['color'] = self._resolve_color(outline_cfg.get('color', 'white'))
 
-        # Precise BBox calculation at 4x
-        dummy = Image.new('RGBA', (1,1))
-        d_dummy = ImageDraw.Draw(dummy)
-        bbox = d_dummy.textbbox((0, 0), text, font=font)
+        img, dx, dy = rendering_icons.render_icon_block(
+            text=text, # Assuming 'text' is the variable holding the character, as per original code. Instruction used 'icon_char' but it's not defined in the original context.
+            font_path=font_path,
+            font_size=size,
+            color=color,
+            sampling=sampling,
+            outline_config=outline_cfg
+        )
         
-        w = bbox[2] - bbox[0]
-        h = bbox[3] - bbox[1]
-        
-        # Add padding
-        pad = int(s_size * 0.1) + 5 * sampling
-        img = Image.new('RGBA', (int(w + pad*2), int(h + pad*2)), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        
-        # Shift to fit in padded canvas
-        d.text((pad - bbox[0], pad - bbox[1]), text, font=font, fill=color)
-        
-        bbox_final = img.getbbox()
-        if bbox_final:
-            img = img.crop(bbox_final)
-            
-        # Downscale
-        new_w = img.width // sampling
-        new_h = img.height // sampling
-        if new_w > 0 and new_h > 0:
-            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            
-        if new_w > 0 and new_h > 0:
-            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            
         x = icon_config.get('x', 0)
         y = icon_config.get('y', 0)
         
-        # Apply outline if configured
-        outline_cfg = icon_config.get('outline')
-        if outline_cfg:
-            img, px, py = self._apply_image_outline(img, outline_cfg)
-            x -= px
-            y -= py
-            
-        return img, (x, y)
+        return img, (int(x + dx), int(y + dy))
 
-    def apply_element_styling(self, canvas, img, x, y, config_item):
+    def apply_element_styling(self, canvas: Image.Image, img: Image.Image, x: int, y: int, config_item: dict) -> None:
         """Apply opacity, rotation, and shadow to an element and composite it onto the canvas."""
         if not img: return
         
-        # Opacity/Alpha (Global for element, distinct from color alpha)
         opacity = config_item.get('opacity', 1.0)
-        if opacity < 1.0:
-            r, g, b, a = img.split()
-            a = a.point(lambda p: int(p * opacity))
-            img = Image.merge('RGBA', (r, g, b, a))
-
-        # Rotation (supports both 'angle' and 'rotation' property names)
         angle = config_item.get('angle', config_item.get('rotation', 0))
-        if angle != 0:
-            cx = x + img.width / 2
-            cy = y + img.height / 2
-            img = img.rotate(-angle, expand=True, resample=Image.BICUBIC)
-            x = cx - img.width / 2
-            y = cy - img.height / 2
-        
-        # Shadow
         shadow_config = config_item.get('shadow')
-        if shadow_config:
-            shadow_img, sx, sy = self._create_shadow_layer(img, shadow_config)
-            if shadow_img:
-                canvas.alpha_composite(shadow_img, (int(x + sx), int(y + sy)))
         
-        canvas.alpha_composite(img, (int(x), int(y)))
+        # We need to resolve colors in shadow_config if present
+        if shadow_config and 'color' in shadow_config:
+            shadow_config = shadow_config.copy()
+            shadow_config['color'] = self._resolve_color(shadow_config['color'])
+
+        img, dx, dy = rendering_effects.apply_styling(img, opacity, angle, shadow_config)
+        
+        canvas.alpha_composite(img, (int(x + dx), int(y + dy)))
 
     def generate_overlay(self, exclude_types=None):
         """

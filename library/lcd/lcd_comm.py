@@ -35,6 +35,10 @@ from PIL import Image, ImageDraw, ImageFont
 
 from library.log import logger
 from library.lcd.color import Color, parse_color
+import library.rendering.text as rendering_text
+import library.rendering.image as rendering_image
+import library.rendering.graphs as rendering_graphs
+import library.rendering.effects as rendering_effects
 
 
 class Orientation(IntEnum):
@@ -227,11 +231,19 @@ class LcdComm(ABC):
 
     def DisplayBitmap(self, bitmap_path: str, x: int = 0, y: int = 0, width: int = 0, height: int = 0):
         image = self.open_image(bitmap_path)
-
-        # Resize the picture if custom width/height provided
+        
+        # Calculate target size if not specified
+        target_size = (width, height) if width != 0 and height != 0 else image.size
+        
+        # Create a temporary canvas for potential resizing/pasting if we wanted to isolate,
+        # but DisplayBitmap usually just sends the image.
+        # However, to be holistic, we use draw_image.
+        # But wait, DisplayBitmap in LcdComm is often used to send a FULL image or a portion.
+        # The existing code resizes the image object itself.
+        
         if width != 0 and height != 0:
-            if width != image.size[0] or height != image.size[1]:
-                image = image.resize((width, height))
+             if width != image.size[0] or height != image.size[1]:
+                 image = image.resize((width, height))
 
         self.DisplayPILImage(image, x, y, width, height)
 
@@ -250,145 +262,115 @@ class LcdComm(ABC):
             align: str = 'left',
             anchor: str = 'la',
             opacity: float = 1.0,
+            rotation: float = 0,
+            shadow: Optional[Dict] = None,
+            outline: Optional[Dict] = None,
     ):
-        # Convert text to bitmap using PIL and display it
-        # Provide the background image path to display text with transparent background
-        # opacity: Global opacity for the text (0.0-1.0), applied in addition to font_color alpha
-
         font_color = parse_color(font_color)
         background_color = parse_color(background_color)
         
-        # Ensure font_color has alpha component (backward compatibility for RGB)
+        # Ensure font_color has alpha component
         if len(font_color) == 3:
             font_color = font_color + (255,)
         
-        # Apply global opacity to font_color alpha
+        # Apply global opacity
         if opacity < 1.0:
-            # Multiply existing alpha by opacity
             font_color = font_color[:3] + (int(font_color[3] * opacity),)
 
-        assert x <= self.get_width(), 'Text X coordinate ' + str(x) + ' must be <= display width ' + str(
-            self.get_width())
-        assert y <= self.get_height(), 'Text Y coordinate ' + str(y) + ' must be <= display height ' + str(
-            self.get_height())
-        assert len(text) > 0, 'Text must not be empty'
-        assert font_size > 0, "Font size must be > 0"
+        assert x <= self.get_width()
+        assert y <= self.get_height()
+        assert len(text) > 0
+        assert font_size > 0
 
-        # If only width is specified, assume height based on font size (one-line text)
-        if width > 0 and height == 0:
-            height = font_size
-
-        if background_image is None:
-            # A text bitmap is created with max width/height by default : text with solid background
-            # Use RGBA mode to support transparency in font_color
-            # background_color needs alpha for RGBA mode
-            bg_color_rgba = background_color if len(background_color) == 4 else background_color + (255,)
-            text_image = Image.new(
-                'RGBA',
-                (self.get_width(), self.get_height()),
-                bg_color_rgba
-            )
-        else:
-            # The text bitmap is created from provided background image : text with transparent background
-            text_image = self.open_image(background_image)
-            # Convert to RGBA if needed to support alpha compositing
-            if text_image.mode != 'RGBA':
-                text_image = text_image.convert('RGBA')
-
-        # Get text bounding box
+        # Load font
         ttfont = self.open_font(font, font_size)
-        d = ImageDraw.Draw(text_image)
 
-        if width == 0 or height == 0:
-            left, top, right, bottom = d.textbbox((x, y), text, font=ttfont, align=align, anchor=anchor)
+        # Prepare styling config
+        outline_cfg = None
+        if outline:
+             outline_cfg = {
+                 'color': parse_color(outline.get('color', (0,0,0,255)), allow_rgba=True),
+                 'width': outline.get('width', 1)
+             }
 
-            # textbbox may return float values, which is not good for the bitmap operations below.
-            # Let's extend the bounding box to the next whole pixel in all directions
-            left, top = math.floor(left), math.floor(top)
-            right, bottom = math.ceil(right), math.ceil(bottom)
+        # Render text block with supersampling and outline support
+        res_image, dx, dy = rendering_text.render_text_block(
+            text, font_color, 
+            font=ttfont,
+            align=align, anchor=anchor, 
+            outline_config=outline_cfg
+        )
+
+        # Apply post-processing (Shadow, Rotation, Opacity)
+        # Note: apply_styling handles no-op cases (rotation=0, etc) internally for performance
+        shadow_cfg = None
+        if shadow:
+            shadow_cfg = {
+                'color': parse_color(shadow.get('color', (0,0,0,128)), allow_rgba=True),
+                'blur': shadow.get('blur', 5),
+                'offset': shadow.get('offset', (5,5))
+            }
+
+        res_image, s_dx, s_dy = rendering_effects.apply_styling(
+            res_image, 
+            opacity=opacity, 
+            rotation=rotation, 
+            shadow=shadow_cfg
+        )
+
+        # Apply coordinate offsets from transformations
+        render_x = x + dx + s_dx
+        render_y = y + dy + s_dy
+
+        # Composite onto background
+        if background_image is None:
+            bg_color_rgba = background_color if len(background_color) == 4 else background_color + (255,)
+            # If we have a forced width/height, we use that for the background patch
+            # Otherwise we use the bounds of the rendered text
+            patch_w = width if width > 0 else res_image.width
+            patch_h = height if height > 0 else res_image.height
+            
+            final_patch = Image.new('RGB', (patch_w, patch_h), bg_color_rgba[:3])
+            
+            # If text was rendered outside or we have specific alignment needs, 
+            # we might need to adjust where we paste on the patch.
+            # For simplicity in hardware path, we paste at (0,0) if it fits, 
+            # or centered if width/height were forced.
+            px, py = 0, 0
+            if width > 0: px = (width - res_image.width) // 2
+            if height > 0: py = (height - res_image.height) // 2
+            
+            final_patch.paste(res_image, (px, py), res_image)
+            self.DisplayPILImage(final_patch, int(render_x), int(render_y))
         else:
-            left, top, right, bottom = x, y, x + width, y + height
-
-            if anchor.startswith("m"):
-                x = int((right + left) / 2)
-            elif anchor.startswith("r"):
-                x = right
-            else:
-                x = left
-
-            if anchor.endswith("m"):
-                y = int((bottom + top) / 2)
-            elif anchor.endswith("b"):
-                y = bottom
-            else:
-                y = top
-
-        # Draw text onto the background image with specified color & font
-        d.text((x, y), text, font=ttfont, fill=font_color, align=align, anchor=anchor)
-
-        # Restrict the dimensions if they overflow the display size
-        left = max(left, 0)
-        top = max(top, 0)
-        right = min(right, self.get_width())
-        bottom = min(bottom, self.get_height())
-
-        # Crop text bitmap to keep only the text
-        text_image = text_image.crop(box=(left, top, right, bottom))
-        
-        # Convert back to RGB for display compatibility (alpha already applied during compositing)
-        if text_image.mode == 'RGBA':
-            # For solid backgrounds, flatten to RGB
-            # For transparent backgrounds (background_image), keep RGBA for proper blending
-            if background_image is None:
-                text_image = text_image.convert('RGB')
-
-        self.DisplayPILImage(text_image, left, top)
+            # If background image is provided, we composite onto a crop of it
+            full_bg = self.open_image(background_image).convert('RGBA')
+            # Extract the region where the text will appear
+            crop_box = (int(render_x), int(render_y), int(render_x + res_image.width), int(render_y + res_image.height))
+            bg_patch = full_bg.crop(crop_box)
+            bg_patch.paste(res_image, (0, 0), res_image)
+            self.DisplayPILImage(bg_patch.convert('RGB'), int(render_x), int(render_y))
 
     def DisplayProgressBar(self, x: int, y: int, width: int, height: int, min_value: int = 0, max_value: int = 100,
-                           value: int = 50,
-                           bar_color: Color = (0, 0, 0),
-                           bar_outline: bool = True,
-                           background_color: Color = (255, 255, 255),
-                           background_image: Optional[str] = None):
-        # Generate a progress bar and display it
-        # Provide the background image path to display progress bar with transparent background
-
+                            value: int = 50,
+                            bar_color: Color = (0, 0, 0),
+                            bar_outline: bool = True,
+                            background_color: Color = (255, 255, 255),
+                            background_image: Optional[str] = None):
         bar_color = parse_color(bar_color)
         background_color = parse_color(background_color)
 
-        assert x <= self.get_width(), 'Progress bar X coordinate must be <= display width'
-        assert y <= self.get_height(), 'Progress bar Y coordinate must be <= display height'
-        assert x + width <= self.get_width(), 'Progress bar width exceeds display width'
-        assert y + height <= self.get_height(), 'Progress bar height exceeds display height'
-
-        # Don't let the set value exceed our min or max value, this is bad :)
-        if value < min_value:
-            value = min_value
-        elif max_value < value:
-            value = max_value
-
-        assert min_value <= value <= max_value, 'Progress bar value shall be between min and max'
+        assert x + width <= self.get_width()
+        assert y + height <= self.get_height()
 
         if background_image is None:
-            # A bitmap is created with solid background
             bar_image = Image.new('RGB', (width, height), background_color)
         else:
-            # A bitmap is created from provided background image
-            bar_image = self.open_image(background_image)
+            bar_image = self.open_image(background_image).crop(box=(x, y, x + width, y + height))
 
-            # Crop bitmap to keep only the progress bar background
-            bar_image = bar_image.crop(box=(x, y, x + width, y + height))
-
-        # Draw progress bar
-        bar_filled_width = (value / (max_value - min_value) * width) - 1
-        if bar_filled_width < 0:
-            bar_filled_width = 0
-        draw = ImageDraw.Draw(bar_image)
-        draw.rectangle([0, 0, bar_filled_width, height - 1], fill=bar_color, outline=bar_color)
-
-        if bar_outline:
-            # Draw outline
-            draw.rectangle([0, 0, width - 1, height - 1], fill=None, outline=bar_color)
+        rendering_graphs.draw_progress_bar(
+            bar_image, (0, 0, width, height), value, min_value, max_value, bar_color, bar_outline
+        )
 
         self.DisplayPILImage(bar_image, x, y)
 
@@ -405,111 +387,28 @@ class LcdComm(ABC):
                          axis_font_size: int = 10,
                          background_color: Color = (255, 255, 255),
                          background_image: Optional[str] = None):
-        # Generate a plot graph and display it
-        # Provide the background image path to display plot graph with transparent background
-
         line_color = parse_color(line_color)
         axis_color = parse_color(axis_color)
         background_color = parse_color(background_color)
 
-        assert x <= self.get_width(), 'Progress bar X coordinate must be <= display width'
-        assert y <= self.get_height(), 'Progress bar Y coordinate must be <= display height'
-        assert x + width <= self.get_width(), 'Progress bar width exceeds display width'
-        assert y + height <= self.get_height(), 'Progress bar height exceeds display height'
+        assert x + width <= self.get_width()
+        assert y + height <= self.get_height()
 
         if background_image is None:
-            # A bitmap is created with solid background
             graph_image = Image.new('RGB', (width, height), background_color)
         else:
-            # A bitmap is created from provided background image
-            graph_image = self.open_image(background_image)
+            graph_image = self.open_image(background_image).crop(box=(x, y, x + width, y + height))
 
-            # Crop bitmap to keep only the plot graph background
-            graph_image = graph_image.crop(box=(x, y, x + width, y + height))
+        ttfont = self.open_font(axis_font, axis_font_size) if graph_axis else None
 
-        # if autoscale is enabled, define new min/max value to "zoom" the graph
-        if autoscale:
-            trueMin = max_value
-            trueMax = min_value
-            for value in values:
-                if not math.isnan(value):
-                    if trueMin > value:
-                        trueMin = value
-                    if trueMax < value:
-                        trueMax = value
-
-            if trueMin != max_value and trueMax != min_value:
-                min_value = max(trueMin - 5, min_value)
-                max_value = min(trueMax + 5, max_value)
-
-        step = width / len(values)
-        # pre compute yScale multiplier value
-        yScale = height / (max_value - min_value)
-
-        plotsX = []
-        plotsY = []
-        count = 0
-        for value in values:
-            if not math.isnan(value):
-                # Don't let the set value exceed our min or max value, this is bad :)                
-                if value < min_value:
-                    value = min_value
-                elif max_value < value:
-                    value = max_value
-
-                assert min_value <= value <= max_value, 'Plot point value shall be between min and max'
-
-                plotsX.append(count * step)
-                plotsY.append(height - (value - min_value) * yScale)
-
-                count += 1
-
-        # Draw plot graph
-        draw = ImageDraw.Draw(graph_image)
-        draw.line(list(zip(plotsX, plotsY)), fill=line_color, width=line_width)
-
-        if graph_axis:
-            # Draw axis
-            draw.line([0, height - 1, width - 1, height - 1], fill=axis_color)
-            draw.line([0, 0, 0, height - 1], fill=axis_color)
-
-            # Draw Legend
-            draw.line([0, 0, 1, 0], fill=axis_color)
-            text = f"{int(max_value)}"
-            ttfont = self.open_font(axis_font, axis_font_size)
-            _, top, right, bottom = ttfont.getbbox(text)
-            draw.text((2, 0 - top), text,
-                      font=ttfont, fill=axis_color)
-
-            text = f"{int(min_value)}"
-            _, top, right, bottom = ttfont.getbbox(text)
-            draw.text((width - 1 - right, height - 2 - bottom), text,
-                      font=ttfont, fill=axis_color)
+        rendering_graphs.draw_line_graph(
+            graph_image, (0, 0, width, height), values, min_value, max_value,
+            autoscale, line_color, line_width, graph_axis, axis_color, ttfont
+        )
 
         self.DisplayPILImage(graph_image, x, y)
 
-    def DrawRadialDecoration(self, draw: ImageDraw.ImageDraw, angle: float, radius: float, width: float, color: Tuple[int, int, int] = (0, 0, 0)):
-        i_cos = math.cos(angle*math.pi/180)
-        i_sin = math.sin(angle*math.pi/180)
-        x_f = (i_cos * (radius - width/2)) + radius
-        if math.modf(x_f) == 0.5:
-            if i_cos > 0:
-                x_f = math.floor(x_f)
-            else:
-                x_f = math.ceil(x_f)
-        else:
-             x_f = math.floor(x_f + 0.5) 
-            
-        y_f = (i_sin * (radius - width/2)) + radius 
-        if math.modf(y_f) == 0.5:
-            if i_sin > 0:
-                y_f = math.floor(y_f)
-            else:
-                y_f = math.ceil(y_f)
-        else:
-            y_f = math.floor(y_f + 0.5)            
-        draw.ellipse([x_f - width/2, y_f - width/2, x_f + width/2, y_f - 1 + width/2 - 1], outline=color, fill=color, width=1)   
-      
+
 
     def DisplayRadialProgressBar(self, xc: int, yc: int, radius: int, bar_width: int,
                                  min_value: int = 0,
@@ -532,178 +431,36 @@ class LcdComm(ABC):
                                  text_offset: Tuple[int, int] = (0,0),
                                  bar_background_color: Color = (0, 0, 0),
                                  draw_bar_background: bool = False,
-                                 bar_decoration: str = ""):                                 
-        # Generate a radial progress bar and display it
-        # Provide the background image path to display progress bar with transparent background
-
+                                 bar_decoration: str = ""):
         bar_color = parse_color(bar_color)
         background_color = parse_color(background_color)
         font_color = parse_color(font_color)
         bar_background_color = parse_color(bar_background_color)
 
-        if angle_start % 361 == angle_end % 361:
-            if clockwise:
-                angle_start += 0.1
-            else:
-                angle_end += 0.1
-
-        assert xc - radius >= 0 and xc + radius <= self.get_width(), 'Radial is out of screen (left/right)'
-        assert yc - radius >= 0 and yc + radius <= self.get_height(), 'Radial is out of screen (up/down)'
-        assert 0 < bar_width <= radius, f'Radial linewidth is {bar_width}, must be > 0 and <= radius'
-        assert angle_end % 361 != angle_start % 361, f'Invalid angles values, start = {angle_start}, end = {angle_end}'
-        assert isinstance(angle_steps, int), 'angle_steps value must be an integer'
-        assert angle_sep >= 0, 'Provide an angle_sep value >= 0'
-        assert angle_steps > 0, 'Provide an angle_step value > 0'
-        assert angle_sep * angle_steps < 360, 'Given angle_sep and angle_steps values are not correctly set'
-
-        # Don't let the set value exceed our min or max value, this is bad :)
-        if value < min_value:
-            value = min_value
-        elif max_value < value:
-            value = max_value
-
-        assert min_value <= value <= max_value, 'Radial value shall be between min and max'
-
         diameter = 2 * radius
         bbox = (xc - radius, yc - radius, xc + radius, yc + radius)
-        #
+
         if background_image is None:
-            # A bitmap is created with solid background
             bar_image = Image.new('RGB', (diameter, diameter), background_color)
         else:
-            # A bitmap is created from provided background image
-            bar_image = self.open_image(background_image)
+            bar_image = self.open_image(background_image).crop(box=bbox)
 
-            # Crop bitmap to keep only the progress bar background
-            bar_image = bar_image.crop(box=bbox)
+        ttfont = self.open_font(font, font_size) if with_text else None
+        if with_text and text is None:
+             text = f"{int(((value - min_value) / (max_value - min_value)) * 100 + .5)}%"
 
-        # Draw progress bar
-        pct = (value - min_value) / (max_value - min_value)
-        draw = ImageDraw.Draw(bar_image)
+        rendering_graphs.draw_radial_progress_bar(
+            bar_image, radius, bar_width, value, min_value, max_value,
+            angle_start, angle_end, angle_sep, angle_steps, clockwise,
+            bar_color, bar_background_color, draw_bar_background, bar_decoration,
+            text, ttfont, font_color, text_offset
+        )
 
-        # PIL arc method uses angles with
-        #  . 3 o'clock for 0
-        #  . clockwise from angle start to angle end
-        angle_start %= 361
-        angle_end %= 361
-        #
-        if clockwise:
-            if angle_end < angle_start:
-                ecart = 360 - angle_start + angle_end
-            else:
-                ecart = angle_end - angle_start
-
-            # draw bar background
-            if draw_bar_background:
-                if angle_end < angle_start:
-                    angleE = angle_start + ecart
-                    angleS = angle_start
-                else:
-                    angleS = angle_start
-                    angleE = angle_start + ecart
-                draw.arc([0, 0, diameter - 1, diameter - 1], angleS, angleE, fill=bar_background_color, width=bar_width) 
-                
-            # draw bar decoration
-            if bar_decoration == "Ellipse":
-                self.DrawRadialDecoration(draw = draw, angle = angle_end, radius = radius, width = bar_width, color = bar_background_color)
-                self.DrawRadialDecoration(draw = draw, angle = angle_start, radius = radius, width = bar_width, color = bar_color)
-                self.DrawRadialDecoration(draw = draw, angle = angle_start + pct * ecart, radius = radius, width = bar_width, color = bar_color)
-
-            #
-            # solid bar case
-            if angle_sep == 0:
-                if angle_end < angle_start:
-                    angleE = angle_start + pct * ecart
-                    angleS = angle_start
-                else:
-                    angleS = angle_start
-                    angleE = angle_start + pct * ecart
-                draw.arc([0, 0, diameter - 1, diameter - 1], angleS, angleE,
-                         fill=bar_color, width=bar_width)
-            # discontinued bar case
-            else:
-                angleE = angle_start + pct * ecart
-                angle_complet = ecart / angle_steps
-                etapes = int((angleE - angle_start) / angle_complet)
-                for i in range(etapes):
-                    draw.arc([0, 0, diameter - 1, diameter - 1],
-                             angle_start + i * angle_complet,
-                             angle_start + (i + 1) * angle_complet - angle_sep,
-                             fill=bar_color,
-                             width=bar_width)
-
-                draw.arc([0, 0, diameter - 1, diameter - 1],
-                         angle_start + etapes * angle_complet,
-                         angleE,
-                         fill=bar_color,
-                         width=bar_width)
-        else:
-            if angle_end < angle_start:
-                ecart = angle_start - angle_end
-            else:
-                ecart = 360 - angle_end + angle_start
-
-            # draw bar background
-            if draw_bar_background:
-                if angle_end < angle_start:
-                    angleE = angle_start
-                    angleS = angle_start - ecart
-                else:
-                    angleS = angle_start - ecart
-                    angleE = angle_start
-                draw.arc([0, 0, diameter - 1, diameter - 1], angleS, angleE, fill=bar_background_color, width=bar_width) 
-
-
-            # draw bar decoration
-            if bar_decoration == "Ellipse":
-                self.DrawRadialDecoration(draw = draw, angle = angle_end, radius = radius, width = bar_width, color = bar_background_color)
-                self.DrawRadialDecoration(draw = draw, angle = angle_start, radius = radius, width = bar_width, color = bar_color)
-                self.DrawRadialDecoration(draw = draw, angle = angle_start - pct * ecart, radius = radius, width = bar_width, color = bar_color)
-
-            #      
-            # solid bar case
-            if angle_sep == 0:
-                if angle_end < angle_start:
-                    angleE = angle_start
-                    angleS = angle_start - pct * ecart
-                else:
-                    angleS = angle_start - pct * ecart
-                    angleE = angle_start
-                draw.arc([0, 0, diameter - 1, diameter - 1], angleS, angleE,
-                         fill=bar_color, width=bar_width)
-            # discontinued bar case
-            else:
-                angleS = angle_start - pct * ecart
-                angle_complet = ecart / angle_steps
-                etapes = int((angle_start - angleS) / angle_complet)
-                for i in range(etapes):
-                    draw.arc([0, 0, diameter - 1, diameter - 1],
-                             angle_start - (i + 1) * angle_complet + angle_sep,
-                             angle_start - i * angle_complet,
-                             fill=bar_color,
-                             width=bar_width)
-
-                draw.arc([0, 0, diameter - 1, diameter - 1],
-                         angleS,
-                         angle_start - etapes * angle_complet,
-                         fill=bar_color,
-                         width=bar_width)
-
-        # Draw text
-        if with_text:
-            if text is None:
-                text = f"{int(pct * 100 + .5)}%"
-            ttfont = self.open_font(font, font_size)
-            left, top, right, bottom = ttfont.getbbox(text)
-            w, h = right - left, bottom - top
-            draw.text((radius - w / 2 + text_offset[0], radius - top - h / 2 + text_offset[1]), text,
-                      font=ttfont, fill=font_color)
-
-        if custom_bbox[0] != 0 or custom_bbox[1] != 0 or custom_bbox[2] != 0 or custom_bbox[3] != 0:
+        if custom_bbox != (0, 0, 0, 0):
             bar_image = bar_image.crop(box=custom_bbox)
-
-        self.DisplayPILImage(bar_image, xc - radius + custom_bbox[0], yc - radius + custom_bbox[1])
-       # self.DisplayPILImage(bar_image, xc - radius, yc - radius)
+            self.DisplayPILImage(bar_image, xc - radius + custom_bbox[0], yc - radius + custom_bbox[1])
+        else:
+            self.DisplayPILImage(bar_image, xc - radius, yc - radius)
 
     # Load image from the filesystem, or get from the cache if it has already been loaded previously
     def open_image(self, bitmap_path: str) -> Image.Image:

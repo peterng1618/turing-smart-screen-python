@@ -13,29 +13,26 @@ class SensorSection(PropertySection):
         super().__init__("Dynamic Settings", editor_state, theme_model, parent)
         
     def _setup_ui(self) -> None:
-        self._content_vbox = QVBoxLayout(self)
-        
         # Interval
         interval_layout = QHBoxLayout()
-        interval_layout.addWidget(QLabel("Refresh:"))
         self._interval_spin = QDoubleSpinBox()
         self._interval_spin.setRange(0.1, 60.0)
         self._interval_spin.setSingleStep(0.5)
         self._interval_spin.setSuffix(" sec")
         self._interval_spin.valueChanged.connect(lambda v: self._emit_property_changed("interval", v))
         interval_layout.addWidget(self._interval_spin, 1)
-        self._content_vbox.addLayout(interval_layout)
+        self._layout.addRow("Refresh:", interval_layout)
         self._widgets["interval"] = self._interval_spin
         
         # Force Static
         self._force_static_check = QCheckBox("Force Static Width/Height")
         self._force_static_check.setToolTip("If checked, width/height are fixed and won't auto-resize to fit text content.")
         self._force_static_check.toggled.connect(lambda v: self._emit_property_changed("force_static", v))
-        self._content_vbox.addWidget(self._force_static_check)
+        self._layout.addRow(self._force_static_check)
         self._widgets["force_static"] = self._force_static_check
         
         # Sensor Picker
-        self._content_vbox.addWidget(QLabel("Insert Sensor:"))
+        self._layout.addRow(QLabel("Insert Sensor:"))
         
         self._scroll_area = QScrollArea()
         self._scroll_area.setWidgetResizable(True)
@@ -49,7 +46,7 @@ class SensorSection(PropertySection):
         self._setup_sensor_list()
         
         self._scroll_area.setWidget(self._sensors_container)
-        self._content_vbox.addWidget(self._scroll_area)
+        self._layout.addRow(self._scroll_area)
 
     def _setup_sensor_list(self) -> None:
         sensor_configs = [
