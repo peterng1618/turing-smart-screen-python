@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import os
 from typing import Tuple, Dict, Optional, List, Union, Any
-import math
-from PIL import Image, ImageDraw, ImageColor
+from PIL import Image, ImageColor
 
 from library.log import logger
 from library import config
@@ -11,6 +10,7 @@ import library.rendering.shapes as rendering_shapes
 import library.rendering.text as rendering_text
 import library.rendering.icons as rendering_icons
 import library.rendering.effects as rendering_effects
+import library.rendering.draw as rendering_draw
 
 class UiRenderer:
     def __init__(self, theme_data, theme_path):
@@ -85,224 +85,49 @@ class UiRenderer:
 
 
 
-    def _get_rounded_polygon_path(self, vertices, radius):
-        """Calculate high-precision path for a rounded convex polygon."""
-        num = len(vertices)
-        if radius <= 0: return vertices
 
-        # Normalize to CW
-        vertices = self._normalize_winding(vertices)
-        
-        # Calculate edges and inward normals
-        normals = []
-        edges = []
-        lengths = []
-        for i in range(num):
-            p1 = vertices[i]
-            p2 = vertices[(i + 1) % num]
-            dx, dy = p2[0] - p1[0], p2[1] - p1[1]
-            l = math.hypot(dx, dy)
-            if l == 0: continue
-            edges.append((p1, p2))
-            normals.append((-dy/l, dx/l))
-            lengths.append(l)
-        
-        num = len(edges)
-        if num < 3: return vertices
-
-        # Calculate arc centers by intersecting shifted edges
-        # We also calculate the maximum safe radius for each corner to prevent overlap
-        centers = []
-        for i in range(num):
-            n_prev = normals[(i - 1 + num) % num]
-            n_curr = normals[i]
-            e_prev = edges[(i - 1 + num) % num]
-            e_curr = edges[i]
-            
-            # Interior angle theta
-            # dot(n_prev, n_curr) = cos(alpha) where alpha is exterior angle. alpha = 180 - theta.
-            dot = max(-1, min(1, n_prev[0]*n_curr[0] + n_prev[1]*n_curr[1]))
-            alpha = math.acos(dot)
-            theta = math.pi - alpha
-            
-            # Max radius for this corner such that tangent distance <= half of adjacent edges
-            # T = R / tan(theta/2)
-            half_min_edge = min(lengths[(i-1+num)%num], lengths[i]) / 2.0
-            r_limit = half_min_edge * math.tan(theta/2.0)
-            corner_radius = min(radius, r_limit)
-            
-            # Shifted lines
-            s_prev_1 = (e_prev[0][0] + n_prev[0] * corner_radius, e_prev[0][1] + n_prev[1] * corner_radius)
-            s_prev_2 = (e_prev[1][0] + n_prev[0] * corner_radius, e_prev[1][1] + n_prev[1] * corner_radius)
-            s_curr_1 = (e_curr[0][0] + n_curr[0] * corner_radius, e_curr[0][1] + n_curr[1] * corner_radius)
-            s_curr_2 = (e_curr[1][0] + n_curr[0] * corner_radius, e_curr[1][1] + n_curr[1] * corner_radius)
-            
-            center = self._get_intersection(s_prev_1, s_prev_2, s_curr_1, s_curr_2)
-            centers.append((center if center else e_curr[0], corner_radius))
-            
-        poly_points = []
-        for i in range(num):
-            center, r = centers[i]
-            n_prev = normals[(i - 1 + num) % num]
-            n_curr = normals[i]
-            
-            start_angle = math.atan2(-n_prev[1], -n_prev[0])
-            end_angle = math.atan2(-n_curr[1], -n_curr[0])
-            if end_angle < start_angle: end_angle += 2 * math.pi
-            
-            steps = 12
-            for s in range(steps + 1):
-                angle = start_angle + (end_angle - start_angle) * (s / steps)
-                poly_points.append((center[0] + math.cos(angle) * r, center[1] + math.sin(angle) * r))
-        return poly_points
-
-    def _draw_dashed_path(self, draw, points, width, color, dash_array, closed=True):
-        """Draw high-quality dashed segments along a path."""
-        if not points: return
-        pts = list(points)
-        if closed: pts.append(pts[0])
-            
-        dash_len, gap_len = dash_array[0], dash_array[1]
-        current_offset = 0
-        is_dash = True
-        dash_pts = []
-        
-        for i in range(len(pts) - 1):
-            p1, p2 = pts[i], pts[i+1]
-            dx, dy = p2[0] - p1[0], p2[1] - p1[1]
-            dist = math.hypot(dx, dy)
-            if dist == 0: continue
-            
-            vx, vy = dx / dist, dy / dist
-            rem = dist
-            seg_off = 0
-            
-            while rem > 0:
-                target = dash_len if is_dash else gap_len
-                space = target - current_offset
-                step = min(rem, space)
-                
-                if is_dash:
-                    if not dash_pts: dash_pts.append((p1[0] + vx * seg_off, p1[1] + vy * seg_off))
-                    dash_pts.append((p1[0] + vx * (seg_off + step), p1[1] + vy * (seg_off + step)))
-                
-                seg_off += step
-                current_offset += step
-                rem -= step
-                
-                if current_offset >= target - 1e-6:
-                    if is_dash and len(dash_pts) > 1:
-                        draw.line(dash_pts, fill=color, width=width, joint='curve')
-                    dash_pts, current_offset, is_dash = [], 0, not is_dash
-
-        if is_dash and len(dash_pts) > 1:
-            draw.line(dash_pts, fill=color, width=width, joint='curve')
-
-
-
-    def _draw_dashed_line(self, draw, p1, p2, width, color, dash_array, cap='butt'):
-        """
-        Draw a dashed line between p1 and p2.
-        dash_array: [draw_pixels, gap_pixels]
-        cap: 'butt' (default) or 'round'
-        """
-        x1, y1 = p1
-        x2, y2 = p2
-        dash_len = dash_array[0]
-        gap_len = dash_array[1]
-        
-        total_dist = math.hypot(x2 - x1, y2 - y1)
-        if total_dist == 0: return
-
-        vx = (x2 - x1) / total_dist
-        vy = (y2 - y1) / total_dist
-        
-        current_dist = 0
-        while current_dist < total_dist:
-            # Determine segment end
-            seg_len = min(dash_len, total_dist - current_dist)
-            
-            # If segment is very short (end of line), strictly clip it? 
-            # Or just draw what fits.
-            # Fix: Allow 0-length segments if dash_len is 0 (for dots with caps)
-            if seg_len <= 0 and dash_len > 0: break
-            
-            start_x = x1 + vx * current_dist
-            start_y = y1 + vy * current_dist
-            end_x = x1 + vx * (current_dist + seg_len)
-            end_y = y1 + vy * (current_dist + seg_len)
-            
-            draw.line([(start_x, start_y), (end_x, end_y)], fill=color, width=width)
-            
-            if cap == 'round':
-                # Draw rounded caps for this segment
-                # Since PIL draw.line is usually flat cap (butt), we add circles at endpoints.
-                r = width / 2
-                # Start cap
-                draw.ellipse([start_x - r, start_y - r, start_x + r, start_y + r], fill=color)
-                # End cap
-                draw.ellipse([end_x - r, end_y - r, end_x + r, end_y + r], fill=color)
-            
-            current_dist += dash_len + gap_len
 
     def draw_shape_to_image(self, shape_config: dict) -> Tuple[Image.Image, Tuple[int, int]]:
         """Render a shape to an RGBA image using the rendering library."""
         shape_type = shape_config.get('type')
         if not shape_type: return None, (0, 0)
 
-        fill_color = self._resolve_color(shape_config.get('color', (255, 255, 255)), shape_config.get('alpha'))
+        # Resolve fill color
+        fill_color = self._resolve_color(
+            shape_config.get('color', (255, 255, 255)), 
+            shape_config.get('alpha')
+        )
         
-        # --- Parse Outline Config ---
+        # Resolve outline config
         outline_cfg = shape_config.get('outline', {})
-        if not outline_cfg:
-            # Fallback to legacy keys
-            if 'outline_color' in shape_config:
-                outline_cfg = {
-                    'color': shape_config.get('outline_color'),
-                    'width': shape_config.get('outline_width', 0),
-                    'dash_array': shape_config.get('dash_array'),
-                    'style': shape_config.get('style'),
-                    'cap': shape_config.get('end_cap', 'butt')
-                }
+        # Support legacy keys fallback (outline_color, outline_width)
+        if not outline_cfg and 'outline_color' in shape_config:
+             outline_cfg = {
+                 'color': shape_config.get('outline_color'),
+                 'width': shape_config.get('outline_width', 0),
+                 'dash_array': shape_config.get('dash_array'),
+                 'style': shape_config.get('style'),
+                 'cap': shape_config.get('end_cap', 'butt')
+             }
         
-        if outline_cfg and 'color' in outline_cfg:
+        if outline_cfg:
             outline_cfg = outline_cfg.copy()
-            outline_cfg['color'] = self._resolve_color(outline_cfg['color'])
-
-        # Resolve dash array from style if needed
-        dash_array = outline_cfg.get('dash_array')
-        if outline_cfg and not dash_array:
-            style = outline_cfg.get('style')
-            if style == 'dotted': dash_array = [2, 2]
-            elif style == 'dashed': dash_array = [10, 5]
-
-        # Extract other parameters
-        outline_color = outline_cfg.get('color', (0, 0, 0, 0))
-        outline_width = outline_cfg.get('width', 0)
-        cap_style = outline_cfg.get('cap', 'butt')
-
-        # Extract other shape-specific parameters
-        w = shape_config.get('width')
-        h = shape_config.get('height')
-        rounding = shape_config.get('rounding', 0)
-        coords = shape_config.get('coords')
-        shear_left = shape_config.get('shear_left', 0)
-        shear_right = shape_config.get('shear_right', 0)
-
+            if 'color' in outline_cfg:
+                outline_cfg['color'] = self._resolve_color(outline_cfg['color'])
+            
+            # Legacy style->dash_array logic
+            if not outline_cfg.get('dash_array'):
+                style = outline_cfg.get('style')
+                if style == 'dotted': outline_cfg['dash_array'] = [2, 2]
+                elif style == 'dashed': outline_cfg['dash_array'] = [10, 5]
+        
+        # Call the library
         img, dx, dy = rendering_shapes.render_shape_to_image(
-            type=shape_type,
-            width=w,
-            height=h,
+            shape_type=shape_type,
+            shape_config=shape_config,
             fill_color=fill_color,
-            outline_color=outline_color,
-            outline_width=outline_width,
-            rounding=rounding,
-            dash_array=dash_array,
-            cap_style=cap_style,
-            sampling=4,
-            coords=coords,
-            shear_left=shear_left,
-            shear_right=shear_right
+            outline_config=outline_cfg if outline_cfg.get('width', 0) > 0 else None,
+            sampling=4
         )
         
         x = shape_config.get('x', 0)
@@ -311,37 +136,58 @@ class UiRenderer:
         return img, (x + dx, y + dy)
 
     def draw_text_to_image(self, text_config: dict, sampling: int = 1) -> Tuple[Image.Image, Tuple[int, int]]:
-        """Render text to an RGBA image using the rendering library."""
+        """Render text to an RGBA image using the rendering library via the orchestration layer."""
         text = text_config.get('text', '')
         if not text: return None, (0,0)
         
+        # Resolve font path
         font_path_rel = text_config.get('font', "roboto/Roboto-Regular.ttf")
         font_path = os.path.join(self.theme_path, font_path_rel)
         if not os.path.exists(font_path):
              if hasattr(config, 'FONTS_DIR'):
                  font_path = os.path.join(config.FONTS_DIR, font_path_rel)
         
+        # Resolve parameters
         size = text_config.get('size', text_config.get('font_size', 20))
         color = self._resolve_color(text_config.get('color', text_config.get('font_color', 'white')), text_config.get('alpha'))
         
-        outline_cfg = text_config.get('outline')
-        if outline_cfg:
-            outline_cfg = outline_cfg.copy()
-            outline_cfg['color'] = self._resolve_color(outline_cfg.get('color', 'white'))
+        # Load font (UiRenderer doesn't have a cache like LcdComm, but rendering_text might)
+        # For now we use ImageFont.truetype directly or a local cache if we want.
+        # But wait, LcdComm has open_font. UiRenderer should probably have one too or use a global one.
+        # For minimal change, we use ImageFont.truetype.
+        try:
+            font = ImageFont.truetype(font_path, size)
+        except Exception:
+            font = ImageFont.load_default()
 
-        img, dx, dy = rendering_text.render_text_block(
-            text=text,
-            font_path=font_path,
-            font_size=size,
-            color=color,
-            sampling=sampling,
-            outline_config=outline_cfg
+        # UiRenderer creates an element image that is then layered.
+        # We'll create a large enough canvas for the text, render it, and then return it.
+        # Since we use alpha_composite, we need an RGBA canvas. 
+        # We don't know the exact size yet, so we'll use a larger one and crop, 
+        # OR we use the fact that rendering_draw.text returns the image but wait, 
+        # I made rendering_draw.text draw ONTO a canvas.
+        
+        # To get the standalone image, we can just call rendering_text.render_text_block directly,
+        # OR we create a temporary canvas. 
+        # Let's create a temporary canvas of 1024x1024 and crop to the bbox.
+        temp_canvas = Image.new('RGBA', (1024, 1024), (0, 0, 0, 0))
+        rx, ry, rw, rh = rendering_draw.text(
+            temp_canvas, text, (0, 0), font, color,
+            align=text_config.get('align', 'left'),
+            anchor=text_config.get('anchor', 'la'),
+            opacity=1.0, # Opacity/Shadow/Rotation are applied by apply_element_styling later in generate_overlay
+            rotation=0, # Rotation is applied by apply_element_styling
+            shadow=None, # Shadow is applied by apply_element_styling
+            outline=text_config.get('outline')
         )
+        
+        # Crop to the actual drawn content
+        element_img = temp_canvas.crop((rx, ry, rx + rw, ry + rh))
         
         x = text_config.get('x', 0)
         y = text_config.get('y', 0)
         
-        return img, (x + dx, y + dy)
+        return element_img, (x + rx, y + ry)
 
     def draw_icon_to_image(self, icon_config: dict, sampling: int = 1) -> Tuple[Image.Image, Tuple[int, int]]:
         """Render an icon with optional supersampling using the rendering library."""
@@ -405,6 +251,17 @@ class UiRenderer:
         img, dx, dy = rendering_effects.apply_styling(img, opacity, angle, shadow_config)
         
         canvas.alpha_composite(img, (int(x + dx), int(y + dy)))
+
+    def _apply_image_outline(self, image: Image.Image, outline_config: dict) -> Tuple[Image.Image, int, int]:
+        """Apply outline to an image using rendering effects."""
+        width = outline_config.get('width', 0)
+        if width <= 0:
+            return image, 0, 0
+            
+        color_val = outline_config.get('color', 'white')
+        color = self._resolve_color(color_val)
+        
+        return rendering_effects.apply_outline(image, width, color)
 
     def generate_overlay(self, exclude_types=None):
         """

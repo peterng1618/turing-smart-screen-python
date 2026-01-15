@@ -1,0 +1,115 @@
+display:
+  DISPLAY_ORIENTATION: landscape
+  DISPLAY_RGB_LED: 61, 184, 225
+
+  DISPLAY_SIZE: '3.5"'
+static_images:
+  BACKGROUND:
+    PATH: background.png
+    X: 0
+    Y: 0
+    WIDTH: 480
+    HEIGHT: 320
+
+STATS:
+  DATE:
+    INTERVAL: 1
+    HOUR:
+      TEXT:
+        SHOW: true
+        X: 20
+        Y: 30
+        FONT: roboto-mono/RobotoMono-Bold.ttf
+        FONT_SIZE: 20
+        FONT_COLOR: 200, 200, 200
+        # BACKGROUND_COLOR: 50, 0, 0
+        BACKGROUND_IMAGE: background.png
+
+  # All custom sensor classes are listed under CUSTOM
+  CUSTOM:
+
+    # For now the refresh interval (in seconds) is the same for all custom data classes
+    INTERVAL: 3
+
+
+
+    # The name of the class must be an exact match to the class name in sensors_custom.py
+    ExampleCustomNumericData:
+
+      # There are 4 ways of displaying a custom sensor containing numeric values: as text, as bar graph (progress bar), as radial progress bar, as line graph
+      TEXT:
+        SHOW: true
+        X: 50
+        Y: 80
+        FONT: roboto-mono/RobotoMono-Bold.ttf
+        FONT_SIZE: 40
+        FONT_COLOR: 200, 200, 200
+        # BACKGROUND_COLOR: 50, 0, 0
+        BACKGROUND_IMAGE: background.png
+
+      GRAPH:
+        SHOW: true
+        X: 50
+        Y: 150
+        WIDTH: 180
+        HEIGHT: 30
+        MIN_VALUE: 0
+        MAX_VALUE: 100
+        BAR_COLOR: 255, 135, 0
+        BAR_OUTLINE: true
+        # BACKGROUND_COLOR: 0, 0, 0
+        BACKGROUND_IMAGE: background.png
+
+      RADIAL:
+        SHOW: true
+        X: 350
+        Y: 130
+        RADIUS: 68
+        WIDTH: 18
+        MIN_VALUE: 0
+        MAX_VALUE: 100
+        ANGLE_START: 110
+        ANGLE_END: 70
+        ANGLE_STEPS: 1
+        ANGLE_SEP: 25
+        CLOCKWISE: true
+        BAR_COLOR: 61, 184, 225
+        SHOW_TEXT: true
+        SHOW_UNIT: true
+        FONT: roboto-mono/RobotoMono-Bold.ttf
+        FONT_SIZE: 25
+        FONT_COLOR: 255, 135, 0
+        # BACKGROUND_COLOR: 0, 0, 0
+        BACKGROUND_IMAGE: background.png
+
+      LINE_GRAPH:
+        SHOW: true
+        X: 300
+        Y: 220
+        WIDTH: 133
+        HEIGHT: 70
+        MIN_VALUE: 0
+        MAX_VALUE: 100
+        AUTOSCALE: false
+        LINE_COLOR: 61, 184, 225
+        AXIS: true
+        AXIS_COLOR: 255, 135, 0
+        AXIS_FONT: roboto/Roboto-Black.ttf
+        AXIS_FONT_SIZE: 10
+        BACKGROUND_IMAGE: background.png
+
+
+
+    # The name of the class must be an exact match to the class name in sensors_custom.py
+    ExampleCustomTextOnlyData:
+
+      # There are only 1 way of displaying a custom sensor containing text-only values: as text
+      TEXT:
+        SHOW: true
+        X: 34
+        Y: 250
+        FONT: roboto-mono/RobotoMono-Bold.ttf
+        FONT_SIZE: 28
+        FONT_COLOR: 61, 184, 225
+        # BACKGROUND_COLOR: 50, 0, 0
+        BACKGROUND_IMAGE: background.png

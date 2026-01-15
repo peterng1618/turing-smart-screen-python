@@ -59,19 +59,27 @@ def _get_theme_orientation() -> Orientation:
 
 
 def _get_theme_size() -> tuple[int, int]:
-    if config.THEME_DATA["display"].get("DISPLAY_SIZE", '') == '0.96"':
+    size_str = str(config.THEME_DATA["display"].get("DISPLAY_SIZE", '')).replace('"', '').strip()
+    try:
+        size = float(size_str)
+    except ValueError:
+        size = 0
+
+    if size == 0.96:
         return 80, 160
-    if config.THEME_DATA["display"].get("DISPLAY_SIZE", '') == '2.1"':
+    elif size == 2.1:
         return 480, 480
-    elif config.THEME_DATA["display"].get("DISPLAY_SIZE", '') == '3.5"':
+    elif size == 2.8:
+        return 480, 480
+    elif size == 3.5:
         return 320, 480
-    elif config.THEME_DATA["display"].get("DISPLAY_SIZE", '') == '5"':
+    elif size == 5.0 or size == 5:
         return 480, 800
-    elif config.THEME_DATA["display"].get("DISPLAY_SIZE", '') == '8.8"':
+    elif size == 8.8:
         return 480, 1920
     else:
         logger.warning(
-            f'Cannot find valid DISPLAY_SIZE property in selected theme {config.CONFIG_DATA["config"]["THEME"]}, defaulting to 3.5"')
+            f'Cannot find valid DISPLAY_SIZE property in selected theme {config.CONFIG_DATA["config"]["THEME"]} (found "{config.THEME_DATA["display"].get("DISPLAY_SIZE", "")}"), defaulting to 3.5"')
         return 320, 480
 
 

@@ -341,7 +341,8 @@ if __name__ == "__main__":
         # Display preview in the window
         if not error_in_theme:
             screen_image = display.lcd.screen_image
-            if config.THEME_DATA["display"].get("DISPLAY_SIZE", '3.5"') == '2.1"':
+            size_str = str(config.THEME_DATA["display"].get("DISPLAY_SIZE", '3.5"')).replace('"', '').strip()
+            if size_str == '2.1':
                 # This is a circular screen: apply a circle mask over the preview
                 screen_image.paste(circular_mask, mask=circular_mask)
             display_image = ImageTk.PhotoImage(
@@ -403,7 +404,8 @@ if __name__ == "__main__":
                 # Display new picture
                 if not error_in_theme:
                     screen_image = display.lcd.screen_image
-                    if config.THEME_DATA["display"].get("DISPLAY_SIZE", '3.5"') == '2.1"':
+                    size_str = str(config.THEME_DATA["display"].get("DISPLAY_SIZE", '3.5"')).replace('"', '').strip()
+                    if size_str == '2.1':
                         # This is a circular screen: apply a circle mask over the preview
                         screen_image.paste(circular_mask, mask=circular_mask)
                     display_image = ImageTk.PhotoImage(

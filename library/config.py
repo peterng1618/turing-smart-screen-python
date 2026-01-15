@@ -71,7 +71,11 @@ def load_theme():
 
 def check_theme_compatible(display_size: str):
     # Check if theme is compatible with hardware revision
-    if display_size != THEME_DATA['display'].get("DISPLAY_SIZE", '3.5"'):
+    def norm(s):
+        return str(s).replace('"', '').strip()
+
+    theme_size = THEME_DATA['display'].get("DISPLAY_SIZE", '3.5"')
+    if norm(display_size) != norm(theme_size):
         logger.error("The selected theme " + CONFIG_DATA['config'][
             'THEME'] + " is not compatible with your display revision " + CONFIG_DATA["display"]["REVISION"])
         try:

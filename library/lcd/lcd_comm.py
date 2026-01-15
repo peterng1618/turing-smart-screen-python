@@ -39,6 +39,7 @@ import library.rendering.text as rendering_text
 import library.rendering.image as rendering_image
 import library.rendering.graphs as rendering_graphs
 import library.rendering.effects as rendering_effects
+import library.rendering.draw as rendering_draw
 
 
 class Orientation(IntEnum):
@@ -266,90 +267,50 @@ class LcdComm(ABC):
             shadow: Optional[Dict] = None,
             outline: Optional[Dict] = None,
     ):
-        font_color = parse_color(font_color)
-        background_color = parse_color(background_color)
+        # Resolve colors
+        font_color_rgba = rendering_draw.resolve_color(font_color, override_alpha=opacity)
+        bg_color_rgba = rendering_draw.resolve_color(background_color)
         
-        # Ensure font_color has alpha component
-        if len(font_color) == 3:
-            font_color = font_color + (255,)
-        
-        # Apply global opacity
-        if opacity < 1.0:
-            font_color = font_color[:3] + (int(font_color[3] * opacity),)
-
-        assert x <= self.get_width()
-        assert y <= self.get_height()
-        assert len(text) > 0
-        assert font_size > 0
-
         # Load font
         ttfont = self.open_font(font, font_size)
 
-        # Prepare styling config
-        outline_cfg = None
-        if outline:
-             outline_cfg = {
-                 'color': parse_color(outline.get('color', (0,0,0,255)), allow_rgba=True),
-                 'width': outline.get('width', 1)
-             }
-
-        # Render text block with supersampling and outline support
-        res_image, dx, dy = rendering_text.render_text_block(
-            text, font_color, 
-            font=ttfont,
-            align=align, anchor=anchor, 
-            outline_config=outline_cfg
-        )
-
-        # Apply post-processing (Shadow, Rotation, Opacity)
-        # Note: apply_styling handles no-op cases (rotation=0, etc) internally for performance
-        shadow_cfg = None
-        if shadow:
-            shadow_cfg = {
-                'color': parse_color(shadow.get('color', (0,0,0,128)), allow_rgba=True),
-                'blur': shadow.get('blur', 5),
-                'offset': shadow.get('offset', (5,5))
-            }
-
-        res_image, s_dx, s_dy = rendering_effects.apply_styling(
-            res_image, 
-            opacity=opacity, 
-            rotation=rotation, 
-            shadow=shadow_cfg
-        )
-
-        # Apply coordinate offsets from transformations
-        render_x = x + dx + s_dx
-        render_y = y + dy + s_dy
-
-        # Composite onto background
-        if background_image is None:
-            bg_color_rgba = background_color if len(background_color) == 4 else background_color + (255,)
-            # If we have a forced width/height, we use that for the background patch
-            # Otherwise we use the bounds of the rendered text
-            patch_w = width if width > 0 else res_image.width
-            patch_h = height if height > 0 else res_image.height
-            
-            final_patch = Image.new('RGB', (patch_w, patch_h), bg_color_rgba[:3])
-            
-            # If text was rendered outside or we have specific alignment needs, 
-            # we might need to adjust where we paste on the patch.
-            # For simplicity in hardware path, we paste at (0,0) if it fits, 
-            # or centered if width/height were forced.
-            px, py = 0, 0
-            if width > 0: px = (width - res_image.width) // 2
-            if height > 0: py = (height - res_image.height) // 2
-            
-            final_patch.paste(res_image, (px, py), res_image)
-            self.DisplayPILImage(final_patch, int(render_x), int(render_y))
+        # We need a canvas. If we have a background image, we composite onto a crop of it.
+        # Otherwise, we create a solid color patch.
+        # LcdComm traditionally sends ONLY the modified area to the screen.
+        
+        # However, to use our unified 'text' helper, we need a canvas.
+        # We'll use a temporary canvas for the bounding box allowed (width x height) if provided,
+        # or we'll render to a large enough canvas and then send the result.
+        
+        # Determine canvas size
+        canvas_w = width if width > 0 else self.get_width()
+        canvas_h = height if height > 0 else self.get_height()
+        
+        if background_image:
+             full_bg = self.open_image(background_image)
+             canvas = rendering_draw.composite_background(canvas_w, canvas_h, bg_color_rgba, background_image=full_bg, crop_xy=(x, y))
         else:
-            # If background image is provided, we composite onto a crop of it
-            full_bg = self.open_image(background_image).convert('RGBA')
-            # Extract the region where the text will appear
-            crop_box = (int(render_x), int(render_y), int(render_x + res_image.width), int(render_y + res_image.height))
-            bg_patch = full_bg.crop(crop_box)
-            bg_patch.paste(res_image, (0, 0), res_image)
-            self.DisplayPILImage(bg_patch.convert('RGB'), int(render_x), int(render_y))
+             canvas = rendering_draw.composite_background(canvas_w, canvas_h, bg_color_rgba)
+        
+        # Draw text at (0,0) of this canvas if width/height were specified, 
+        # but wait, LcdComm.DisplayText takes absolute (x, y).
+        # We want the output to be at (x, y) on the screen.
+        # So we draw at (0,0) relative to our cropped canvas.
+        
+        rx, ry, rw, rh = rendering_draw.text(
+            canvas, text, (0, 0), ttfont, font_color_rgba,
+            align=align, anchor=anchor, opacity=1.0, # Opacity already applied to font_color_rgba
+            rotation=rotation, shadow=shadow, outline=outline
+        )
+        
+        # Final result to send to screen
+        # If width/height were 0, canvas is full screen size (inefficient to send)
+        # So we crop it to the bounding box of what was actually drawn
+        if width == 0 or height == 0:
+             final_img = canvas.crop((rx, ry, rx + rw, ry + rh))
+             self.DisplayPILImage(final_img.convert('RGB'), x + rx, y + ry)
+        else:
+             self.DisplayPILImage(canvas.convert('RGB'), x, y)
 
     def DisplayProgressBar(self, x: int, y: int, width: int, height: int, min_value: int = 0, max_value: int = 100,
                             value: int = 50,
@@ -357,22 +318,23 @@ class LcdComm(ABC):
                             bar_outline: bool = True,
                             background_color: Color = (255, 255, 255),
                             background_image: Optional[str] = None):
-        bar_color = parse_color(bar_color)
-        background_color = parse_color(background_color)
+        # Resolve colors
+        bar_color_rgba = rendering_draw.resolve_color(bar_color)
+        bg_color_rgba = rendering_draw.resolve_color(background_color)
 
-        assert x + width <= self.get_width()
-        assert y + height <= self.get_height()
-
-        if background_image is None:
-            bar_image = Image.new('RGB', (width, height), background_color)
+        # Prepare canvas
+        if background_image:
+             full_bg = self.open_image(background_image)
+             canvas = rendering_draw.composite_background(width, height, bg_color_rgba, background_image=full_bg, crop_xy=(x, y))
         else:
-            bar_image = self.open_image(background_image).crop(box=(x, y, x + width, y + height))
+             canvas = rendering_draw.composite_background(width, height, bg_color_rgba)
 
-        rendering_graphs.draw_progress_bar(
-            bar_image, (0, 0, width, height), value, min_value, max_value, bar_color, bar_outline
+        # Draw bar at (0, 0) of our cropped canvas
+        rendering_draw.progress_bar(
+            canvas, (0, 0, width, height), value, min_value, max_value, bar_color_rgba, bar_outline
         )
 
-        self.DisplayPILImage(bar_image, x, y)
+        self.DisplayPILImage(canvas.convert('RGB'), x, y)
 
     def DisplayLineGraph(self, x: int, y: int, width: int, height: int,
                          values: List[float],
@@ -387,26 +349,27 @@ class LcdComm(ABC):
                          axis_font_size: int = 10,
                          background_color: Color = (255, 255, 255),
                          background_image: Optional[str] = None):
-        line_color = parse_color(line_color)
-        axis_color = parse_color(axis_color)
-        background_color = parse_color(background_color)
+        # Resolve colors
+        line_color_rgba = rendering_draw.resolve_color(line_color)
+        axis_color_rgba = rendering_draw.resolve_color(axis_color)
+        bg_color_rgba = rendering_draw.resolve_color(background_color)
 
-        assert x + width <= self.get_width()
-        assert y + height <= self.get_height()
-
-        if background_image is None:
-            graph_image = Image.new('RGB', (width, height), background_color)
+        # Prepare canvas
+        if background_image:
+             full_bg = self.open_image(background_image)
+             canvas = rendering_draw.composite_background(width, height, bg_color_rgba, background_image=full_bg, crop_xy=(x, y))
         else:
-            graph_image = self.open_image(background_image).crop(box=(x, y, x + width, y + height))
+             canvas = rendering_draw.composite_background(width, height, bg_color_rgba)
 
         ttfont = self.open_font(axis_font, axis_font_size) if graph_axis else None
 
-        rendering_graphs.draw_line_graph(
-            graph_image, (0, 0, width, height), values, min_value, max_value,
-            autoscale, line_color, line_width, graph_axis, axis_color, ttfont
+        # Draw graph at (0, 0)
+        rendering_draw.line_graph(
+            canvas, (0, 0, width, height), values, min_value, max_value,
+            autoscale, line_color_rgba, line_width, graph_axis, axis_color_rgba, ttfont
         )
 
-        self.DisplayPILImage(graph_image, x, y)
+        self.DisplayPILImage(canvas.convert('RGB'), x, y)
 
 
 
@@ -432,35 +395,38 @@ class LcdComm(ABC):
                                  bar_background_color: Color = (0, 0, 0),
                                  draw_bar_background: bool = False,
                                  bar_decoration: str = ""):
-        bar_color = parse_color(bar_color)
-        background_color = parse_color(background_color)
-        font_color = parse_color(font_color)
-        bar_background_color = parse_color(bar_background_color)
+        # Resolve colors
+        bar_color_rgba = rendering_draw.resolve_color(bar_color)
+        bg_color_rgba = rendering_draw.resolve_color(background_color)
+        font_color_rgba = rendering_draw.resolve_color(font_color)
+        bar_bg_color_rgba = rendering_draw.resolve_color(bar_background_color)
 
         diameter = 2 * radius
-        bbox = (xc - radius, yc - radius, xc + radius, yc + radius)
-
-        if background_image is None:
-            bar_image = Image.new('RGB', (diameter, diameter), background_color)
+        
+        # Prepare canvas
+        if background_image:
+             full_bg = self.open_image(background_image)
+             canvas = rendering_draw.composite_background(diameter, diameter, bg_color_rgba, background_image=full_bg, crop_xy=(xc - radius, yc - radius))
         else:
-            bar_image = self.open_image(background_image).crop(box=bbox)
+             canvas = rendering_draw.composite_background(diameter, diameter, bg_color_rgba)
 
         ttfont = self.open_font(font, font_size) if with_text else None
         if with_text and text is None:
              text = f"{int(((value - min_value) / (max_value - min_value)) * 100 + .5)}%"
 
-        rendering_graphs.draw_radial_progress_bar(
-            bar_image, radius, bar_width, value, min_value, max_value,
+        # Draw radial bar at (radius, radius) relative to our cropped canvas
+        rendering_draw.radial_progress_bar(
+            canvas, (radius, radius, radius), bar_width, value, min_value, max_value,
             angle_start, angle_end, angle_sep, angle_steps, clockwise,
-            bar_color, bar_background_color, draw_bar_background, bar_decoration,
-            text, ttfont, font_color, text_offset
+            text, ttfont, font_color_rgba, bar_color_rgba, text_offset, 
+            bar_bg_color_rgba, draw_bar_background, bar_decoration
         )
 
         if custom_bbox != (0, 0, 0, 0):
-            bar_image = bar_image.crop(box=custom_bbox)
-            self.DisplayPILImage(bar_image, xc - radius + custom_bbox[0], yc - radius + custom_bbox[1])
+            canvas = canvas.crop(box=custom_bbox)
+            self.DisplayPILImage(canvas.convert('RGB'), xc - radius + custom_bbox[0], yc - radius + custom_bbox[1])
         else:
-            self.DisplayPILImage(bar_image, xc - radius, yc - radius)
+            self.DisplayPILImage(canvas.convert('RGB'), xc - radius, yc - radius)
 
     # Load image from the filesystem, or get from the cache if it has already been loaded previously
     def open_image(self, bitmap_path: str) -> Image.Image:
